@@ -1,4 +1,7 @@
-package org.unict.pds.message.topic.publish;
+package org.unict.pds.message.publish;
 
-public record PublishWorkerRequest() {
-}
+import io.netty.handler.codec.mqtt.MqttPublishMessage;
+
+public record PublishWorkerRequest(
+        MqttPublishMessage message
+) {}

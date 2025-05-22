@@ -1,4 +1,7 @@
-package org.unict.pds.message.topic.publish;
+package org.unict.pds.message.publish;
 
-public record PublishManagerResponse() {
+public record PublishManagerResponse(
+        int messageId,
+        boolean success
+) {
 }

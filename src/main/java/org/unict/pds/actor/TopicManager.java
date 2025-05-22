@@ -1,21 +1,25 @@
-package org.unict.pds.actor.mqtt;
+package org.unict.pds.actor;
 
 import akka.actor.AbstractActor;
-import akka.actor.Props;
-import lombok.RequiredArgsConstructor;
+import lombok.Getter;
+import org.unict.pds.configuration.ConfigurationExtension;
+import org.unict.pds.configuration.TopicManagerConfiguration;
 import org.unict.pds.message.topic.CheckTopicExist;
 
 import java.util.HashSet;
 import java.util.Set;
 
-@RequiredArgsConstructor
+@Getter
 public class TopicManager extends AbstractActor {
 
-    private final Boolean autoCreateTopic;
+    private boolean autoCreateTopic;
     private final Set<String> existingTopics = new HashSet<>();
 
-    public static Props props(boolean autoCreateTopic) {
-        return Props.create(TopicManager.class, autoCreateTopic);
+    @Override
+    public void preStart() {
+        TopicManagerConfiguration topicManagerConfiguration = ConfigurationExtension.getInstance()
+                .get(getContext().getSystem()).topicManagerConfig();
+        autoCreateTopic = topicManagerConfiguration.autoCreateTopic();
     }
 
     @Override
@@ -29,13 +33,10 @@ public class TopicManager extends AbstractActor {
 
     private void handleCheckTopicExists(CheckTopicExist.Request request) {
         boolean topicExists = existingTopics.contains(request.topicName());
-
         if (!topicExists && autoCreateTopic) {
             existingTopics.add(request.topicName());
             topicExists = true;
         }
-
         getSender().tell(new CheckTopicExist.Response(request.topicName(), topicExists), getSelf());
     }
-
 }

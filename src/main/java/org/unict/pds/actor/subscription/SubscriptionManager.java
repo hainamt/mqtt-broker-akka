@@ -1,4 +1,4 @@
-package org.unict.pds.actor;
+package org.unict.pds.actor.subscription;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
@@ -10,26 +10,32 @@ import io.netty.handler.codec.mqtt.MqttSubscribePayload;
 import io.netty.handler.codec.mqtt.MqttTopicSubscription;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.SubscriptionManagerConfiguration;
+import org.unict.pds.message.subscribe.SubscriberLookup;
 import org.unict.pds.message.topic.CheckTopicExist;
-import org.unict.pds.message.topic.SubscriptionManagerResponse;
+import org.unict.pds.message.subscribe.SubscribeTopicResponse;
 
 import java.time.Duration;
 import java.util.List;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SubscriptionManager extends AbstractActor {
 
     private ActorRef topicManager;
+    private final Map<String, List<ActorRef>> topicSubscribers = new ConcurrentHashMap<>();
+
 
     @Override
     public void preStart() {
 
         SubscriptionManagerConfiguration subscriptionManagerConfig = ConfigurationExtension.getInstance()
-                .get(getContext().getSystem()).getSubscriptionManagerConfig();
+                .get(getContext().getSystem()).subscriptionManagerConfig();
 
         ActorSelection selection = getContext().actorSelection(subscriptionManagerConfig.topicManagerAddress());
 
@@ -47,10 +53,8 @@ public class SubscriptionManager extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(
-                        MqttSubscribeMessage.class,
-                        this::processMessage
-                )
+                .match(MqttSubscribeMessage.class, this::processMessage)
+                .match(SubscriberLookup.Request.class, this::handleSubscriberLookup)
                 .build();
     }
 
@@ -59,6 +63,8 @@ public class SubscriptionManager extends AbstractActor {
         List<String> topicNames = payload.topicSubscriptions().stream()
                 .map(MqttTopicSubscription::topicFilter)
                 .toList();
+
+        ActorRef subscriber = sender();
 
         AtomicInteger pendingChecks = new AtomicInteger(topicNames.size());
         List<MqttReasonCodes.SubAck> results = new ArrayList<>(Collections.nCopies(topicNames.size(), null));
@@ -75,11 +81,18 @@ public class SubscriptionManager extends AbstractActor {
 
             future.thenAccept(response -> {
                 CheckTopicExist.Response resp = (CheckTopicExist.Response) response;
+                boolean topicExists = resp.exists();
+
                 results.set(index, resp.exists() ?
                         MqttReasonCodes.SubAck.GRANTED_QOS_0 :
                         MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
+
+                if (topicExists) {
+                    addSubscriber(topic, subscriber);
+                }
+
                 if (pendingChecks.decrementAndGet() == 0) {
-                    getSender().tell(new SubscriptionManagerResponse(
+                    getSender().tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -87,7 +100,7 @@ public class SubscriptionManager extends AbstractActor {
             }).exceptionally(ex -> {
                 results.set(index, MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
                 if (pendingChecks.decrementAndGet() == 0) {
-                    getSender().tell(new SubscriptionManagerResponse(
+                    getSender().tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -96,4 +109,28 @@ public class SubscriptionManager extends AbstractActor {
             });
         }
     }
+
+    private void addSubscriber(String topic, ActorRef subscriber) {
+        List<ActorRef> subscribers = topicSubscribers.computeIfAbsent(
+                topic,
+                k -> new CopyOnWriteArrayList<>()
+        );
+
+        if (!subscribers.contains(subscriber)) {
+            subscribers.add(subscriber);
+            System.out.println("Added subscriber to topic: " + topic +
+                    ", total subscribers: " + subscribers.size());
+            getContext().watch(subscriber);
+        }
+    }
+
+
+    private void handleSubscriberLookup(SubscriberLookup.Request request) {
+        String topic = request.topic();
+        System.out.printf("Looking up subscribers for topic: %s", topic);
+        List<ActorRef> exactSubscribers = topicSubscribers.getOrDefault(topic, new ArrayList<>());
+        SubscriberLookup.Response response = new SubscriberLookup.Response(topic, exactSubscribers);
+        sender().tell(response, self());
+    }
+
 }

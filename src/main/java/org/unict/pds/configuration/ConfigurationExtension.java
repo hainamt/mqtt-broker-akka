@@ -1,4 +1,42 @@
 package org.unict.pds.configuration;
 
-public class ConfigurationExtension {
+import akka.actor.AbstractExtensionId;
+import akka.actor.ExtendedActorSystem;
+import akka.actor.Extension;
+import akka.actor.ExtensionIdProvider;
+import lombok.Getter;
+
+
+public class ConfigurationExtension
+        extends AbstractExtensionId<ConfigurationExtension.ConfigExt>
+        implements ExtensionIdProvider {
+
+    @Getter
+    private static final ConfigurationExtension instance = new ConfigurationExtension();
+
+    @Override
+    public ConfigurationExtension lookup() {
+        return instance;
+    }
+
+    @Override
+    public ConfigExt createExtension(ExtendedActorSystem system) {
+        return ConfigExt.load();
+    }
+
+    public record ConfigExt(TCPConfiguration tcpConfig,
+                         MQTTManagerConfiguration mqttManagerConfig,
+                         TopicManagerConfiguration topicManagerConfig,
+                         SubscriptionManagerConfiguration subscriptionManagerConfig,
+                         PublishWorkerConfiguration publishWorkerConfig) implements Extension {
+        public static ConfigExt load() {
+            return new ConfigExt(
+                    TCPConfiguration.load(),
+                    MQTTManagerConfiguration.load(),
+                    TopicManagerConfiguration.load(),
+                    SubscriptionManagerConfiguration.load(),
+                    PublishWorkerConfiguration.load()
+            );
+        }
+    }
 }

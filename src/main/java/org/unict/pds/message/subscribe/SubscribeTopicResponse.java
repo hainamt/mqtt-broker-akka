@@ -4,7 +4,7 @@ import io.netty.handler.codec.mqtt.MqttReasonCodes;
 
 import java.util.List;
 
-public record SubscriptionManagerResponse(
+public record SubscribeTopicResponse(
         int messageId,
         List<MqttReasonCodes.SubAck> responseCodes
 ) { }

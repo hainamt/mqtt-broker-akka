@@ -1,4 +1,4 @@
 package org.unict.pds.actor.publishing;
 
-public class PublishingManager {
+public class PublishManager {
 }

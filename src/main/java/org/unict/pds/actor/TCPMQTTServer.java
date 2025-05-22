@@ -5,21 +5,26 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.io.Tcp;
 import akka.io.TcpMessage;
-import org.unict.pds.actor.mqtt.MQTTHandler;
+import org.unict.pds.actor.server.MQTTManager;
+import org.unict.pds.configuration.ConfigurationExtension;
+import org.unict.pds.configuration.TCPConfiguration;
 
 import java.net.InetSocketAddress;
 
 
-public class TCPServer extends AbstractActor {
+public class TCPMQTTServer extends AbstractActor {
 
-    public static Props props() {
-        return Props.create(TCPServer.class);
-    }
     @Override
     public void preStart() throws Exception {
+        TCPConfiguration tcpConfiguration = ConfigurationExtension.getInstance()
+                .get(getContext().getSystem()).tcpConfig();
         final ActorRef tcp = Tcp.get(getContext().getSystem()).manager();
-        Tcp.Command bindCommand = TcpMessage.bind(getSelf(),
-                new InetSocketAddress("localhost", 8883), 100);
+        Tcp.Command bindCommand = TcpMessage.bind(
+                getSelf(),
+                new InetSocketAddress(
+                        tcpConfiguration.hostname(),
+                        tcpConfiguration.port()),
+                        tcpConfiguration.backlog());
         tcp.tell(bindCommand, getSelf());
     }
 
@@ -37,7 +42,7 @@ public class TCPServer extends AbstractActor {
                         Tcp.Connected.class,
                         conn -> {
                             System.out.println("Client connected from: " + conn.remoteAddress());
-                            final ActorRef handler = getContext().actorOf(Props.create(MQTTHandler.class));
+                            final ActorRef handler = getContext().actorOf(Props.create(MQTTManager.class));
                             getSender().tell(TcpMessage.register(handler), getSelf());
                         }
                 )
