@@ -28,6 +28,7 @@ public class ConfigurationExtension
                          MQTTManagerConfiguration mqttManagerConfig,
                          TopicManagerConfiguration topicManagerConfig,
                          SubscriptionManagerConfiguration subscriptionManagerConfig,
+                         PublishManagerConfiguration publishManagerConfig,
                          PublishWorkerConfiguration publishWorkerConfig) implements Extension {
         public static ConfigExt load() {
             return new ConfigExt(
@@ -35,6 +36,7 @@ public class ConfigurationExtension
                     MQTTManagerConfiguration.load(),
                     TopicManagerConfiguration.load(),
                     SubscriptionManagerConfiguration.load(),
+                    PublishManagerConfiguration.load(),
                     PublishWorkerConfiguration.load()
             );
         }
