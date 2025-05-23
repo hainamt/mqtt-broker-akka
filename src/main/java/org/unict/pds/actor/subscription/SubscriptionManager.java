@@ -30,7 +30,6 @@ public class SubscriptionManager extends AbstractActor {
     private ActorRef topicManager;
     private final Map<String, List<ActorRef>> topicSubscribers = new ConcurrentHashMap<>();
 
-
     @Override
     public void preStart() {
 
@@ -64,7 +63,7 @@ public class SubscriptionManager extends AbstractActor {
                 .map(MqttTopicSubscription::topicFilter)
                 .toList();
 
-        ActorRef subscriber = sender();
+        final ActorRef originalSender = sender();
 
         AtomicInteger pendingChecks = new AtomicInteger(topicNames.size());
         List<MqttReasonCodes.SubAck> results = new ArrayList<>(Collections.nCopies(topicNames.size(), null));
@@ -88,11 +87,12 @@ public class SubscriptionManager extends AbstractActor {
                         MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
 
                 if (topicExists) {
-                    addSubscriber(topic, subscriber);
+                    addSubscriber(topic, originalSender);
                 }
 
                 if (pendingChecks.decrementAndGet() == 0) {
-                    getSender().tell(new SubscribeTopicResponse(
+                    // Use the captured sender reference here, not getSender()
+                    originalSender.tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -100,7 +100,8 @@ public class SubscriptionManager extends AbstractActor {
             }).exceptionally(ex -> {
                 results.set(index, MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
                 if (pendingChecks.decrementAndGet() == 0) {
-                    getSender().tell(new SubscribeTopicResponse(
+                    // Use the captured sender reference here too
+                    originalSender.tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -109,6 +110,7 @@ public class SubscriptionManager extends AbstractActor {
             });
         }
     }
+
 
     private void addSubscriber(String topic, ActorRef subscriber) {
         List<ActorRef> subscribers = topicSubscribers.computeIfAbsent(
@@ -123,7 +125,6 @@ public class SubscriptionManager extends AbstractActor {
             getContext().watch(subscriber);
         }
     }
-
 
     private void handleSubscriberLookup(SubscriberLookup.Request request) {
         String topic = request.topic();

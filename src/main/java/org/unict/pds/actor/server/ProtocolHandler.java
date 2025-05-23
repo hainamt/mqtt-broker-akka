@@ -7,12 +7,12 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
+import org.unict.pds.message.publish.PublishMessageRelease;
 
 @RequiredArgsConstructor
 public class ProtocolHandler {
     private final MQTTManager actor;
     private final EmbeddedChannel encodeChannel = new EmbeddedChannel(MqttEncoder.INSTANCE);
-
 
     public void processProtocolMessage(MqttMessage message) {
         switch (message.fixedHeader().messageType()) {
@@ -23,11 +23,12 @@ public class ProtocolHandler {
 
             case PUBLISH:
                 System.out.println("Handling PUBLISH message");
-                handlePublish((MqttPublishMessage) message);
+                handlePublishRequest((MqttPublishMessage) message);
                 break;
 
             case CONNECT:
                 System.out.println("Handling CONNECT message");
+                System.out.println("Client: " + actor.getSender().path().address().toString());
                 handleConnect();
                 break;
 
@@ -103,9 +104,14 @@ public class ProtocolHandler {
         sendMqttMessage(subAckMessage);
     }
 
-    private void handlePublish(MqttPublishMessage message) {
+    private void handlePublishRequest(MqttPublishMessage message) {
         System.out.println("Processing PUBLISH message to topic: " + message.variableHeader().topicName());
         actor.getInternalHandler().forwardPublishToPublishManager(message);
+    }
+
+    private void handlePublishRelease(PublishMessageRelease message) {
+        System.out.println("Processing PUBLISH message release to topic: " + message.message().variableHeader().topicName());
+        sendMqttMessage(message.message());
     }
 
     public void sendPubAck(int packetId, boolean success) {
@@ -127,11 +133,11 @@ public class ProtocolHandler {
         encodeChannel.writeOutbound(message);
         ByteBuf msgBuf = encodeChannel.readOutbound();
         if (msgBuf != null) {
-            actor.getSender().tell(TcpMessage.write(ByteString.fromByteBuffer(msgBuf.nioBuffer())), actor.getSelf());
+            actor.getTcpConnection().tell(TcpMessage.write(ByteString.fromByteBuffer(msgBuf.nioBuffer())),
+                    actor.getSelf());
         } else {
             System.err.println("Failed to encode MQTT message");
         }
     }
-
 
 }

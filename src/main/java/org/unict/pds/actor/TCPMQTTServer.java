@@ -42,7 +42,8 @@ public class TCPMQTTServer extends AbstractActor {
                         Tcp.Connected.class,
                         conn -> {
                             System.out.println("Client connected from: " + conn.remoteAddress());
-                            final ActorRef handler = getContext().actorOf(Props.create(MQTTManager.class));
+                            ActorRef tcpConnection = getSender();
+                            final ActorRef handler = getContext().actorOf(Props.create(MQTTManager.class, tcpConnection));
                             getSender().tell(TcpMessage.register(handler), getSelf());
                         }
                 )

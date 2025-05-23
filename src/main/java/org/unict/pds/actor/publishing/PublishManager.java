@@ -7,7 +7,7 @@ import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.PublishManagerConfiguration;
 import org.unict.pds.message.publish.PublishManagerResponse;
-import org.unict.pds.message.publish.PublishWorkerRequest;
+import org.unict.pds.message.publish.PublishMessageRequest;
 import org.unict.pds.message.topic.CheckTopicExist;
 
 import java.time.Duration;
@@ -35,12 +35,10 @@ public class PublishManager extends AbstractActor {
 
         int numWorkers = config.numberWorkers();
 
-        // Create a pool of publish workers using consistent hashing
-        // This ensures messages for the same topic always go to the same worker
         publishWorkerRouter = getContext().actorOf(
                 new ConsistentHashingPool(numWorkers)
                         .withHashMapper(message -> {
-                            if (message instanceof PublishWorkerRequest req) {
+                            if (message instanceof PublishMessageRequest req) {
                                 return req.message().variableHeader().topicName();
                             }
                             return null;
@@ -77,8 +75,8 @@ public class PublishManager extends AbstractActor {
     private void handlePublishMessage(MqttPublishMessage message) {
         String topic = message.variableHeader().topicName();
         int messageId = message.variableHeader().packetId();
-        boolean requiresAck = message.fixedHeader().qosLevel().value() > 0;
-
+//        boolean requiresAck = message.fixedHeader().qosLevel().value() > 0;
+        boolean requiresAck = false;
         System.out.println("PublishManager received message for topic: " + topic);
 
         if (topicManager == null) {
@@ -122,7 +120,7 @@ public class PublishManager extends AbstractActor {
     }
 
     private void forwardToPublishWorker(MqttPublishMessage message, boolean requiresAck, int messageId) {
-        PublishWorkerRequest request = new PublishWorkerRequest(message);
+        PublishMessageRequest request = new PublishMessageRequest(message);
         publishWorkerRouter.tell(request, self());
 
         if (requiresAck) {

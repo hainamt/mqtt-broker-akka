@@ -4,6 +4,8 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
 import org.unict.pds.message.publish.PublishManagerResponse;
+import org.unict.pds.message.publish.PublishMessageRelease;
+import org.unict.pds.message.publish.PublishMessageRequest;
 import org.unict.pds.message.subscribe.SubscribeTopicResponse;
 
 import java.util.List;
@@ -21,12 +23,10 @@ public class InternalHandler {
         actor.getProtocolHandler().sendSubAck(packetId, qosLevels);
     }
 
-
     public void forwardSubscribeToTopicManager(MqttSubscribeMessage message) {
         System.out.println("Forwarding SUBSCRIBE message to SubscriptionManager");
         actor.getSubscriptionManager().tell(message, actor.getSelf());
     }
-
 
     public void forwardPublishToPublishManager(MqttPublishMessage message) {
         System.out.println("Forwarding PUBLISH message to PublishingManager");
@@ -35,5 +35,9 @@ public class InternalHandler {
 
     public void handlePublishManagerResponse(PublishManagerResponse response) {
         actor.getProtocolHandler().sendPubAck(response.messageId(), response.success());
+    }
+
+    public void handlePublishMessageRelease(PublishMessageRelease message) {
+        actor.getProtocolHandler().sendMqttMessage(message.message());
     }
 }
