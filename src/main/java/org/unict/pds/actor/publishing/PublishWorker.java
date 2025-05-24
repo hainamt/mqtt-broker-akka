@@ -169,7 +169,6 @@ public class PublishWorker extends AbstractActor {
             }
         }
 
-        // TODO: using internal message to wrap the protocol message
         private void distributeMessageToSubscribers(MqttPublishMessage message) {
             if (subscribers == null || subscribers.isEmpty()) {
                 System.out.printf("No subscribers for topic: %s%n", topic);
@@ -179,9 +178,27 @@ public class PublishWorker extends AbstractActor {
             System.out.printf("Distributing message to %s subscribers for topic: %s%n",
                     subscribers.size(), topic);
             
-            for (ActorRef subscriber : subscribers) {
-                subscriber.tell(new PublishMessage.Release(message), getSelf());
+            if (!subscribers.isEmpty()) {
+                subscribers.get(0).tell(new PublishMessage.Release(message), getSelf());
             }
+            
+            for (int i = 1; i < subscribers.size(); i++) {
+                // Create a copy of the message with retained content
+                MqttPublishMessage messageCopy = copyMqttPublishMessage(message);
+                subscribers.get(i).tell(new PublishMessage.Release(messageCopy), getSelf());
+            }
+        }
+        
+        private MqttPublishMessage copyMqttPublishMessage(MqttPublishMessage original) {
+            if (original.content() != null) {
+                original.content().retain();
+            }
+            
+            return new MqttPublishMessage(
+                    original.fixedHeader(),
+                    original.variableHeader(),
+                    original.content()
+            );
         }
     }
 }
