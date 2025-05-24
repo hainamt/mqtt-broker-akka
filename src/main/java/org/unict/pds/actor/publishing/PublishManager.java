@@ -6,8 +6,7 @@ import akka.routing.ConsistentHashingPool;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.PublishManagerConfiguration;
-import org.unict.pds.message.publish.PublishManagerResponse;
-import org.unict.pds.message.publish.PublishMessageRequest;
+import org.unict.pds.message.publish.PublishMessage;
 import org.unict.pds.message.topic.CheckTopicExist;
 
 import java.time.Duration;
@@ -19,15 +18,6 @@ public class PublishManager extends AbstractActor {
     private ActorRef topicManager;
     private final Duration checkTopicTimeout = Duration.ofSeconds(3);
 
-
-    public static Props props() {
-        return Props.create(PublishManager.class);
-    }
-
-    public static Props props(int numWorkers) {
-        return Props.create(PublishManager.class, numWorkers);
-    }
-
     @Override
     public void preStart() {
         PublishManagerConfiguration config = ConfigurationExtension.getInstance()
@@ -38,7 +28,7 @@ public class PublishManager extends AbstractActor {
         publishWorkerRouter = getContext().actorOf(
                 new ConsistentHashingPool(numWorkers)
                         .withHashMapper(message -> {
-                            if (message instanceof PublishMessageRequest req) {
+                            if (message instanceof PublishMessage.Request req) {
                                 return req.message().variableHeader().topicName();
                             }
                             return null;
@@ -68,20 +58,20 @@ public class PublishManager extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(MqttPublishMessage.class, this::handlePublishMessage)
+                .match(PublishMessage.Request.class, this::handlePublishMessage)
                 .build();
     }
 
-    private void handlePublishMessage(MqttPublishMessage message) {
+    private void handlePublishMessage(PublishMessage.Request request) {
+        MqttPublishMessage message = request.message();
         String topic = message.variableHeader().topicName();
-        int messageId = message.variableHeader().packetId();
-//        boolean requiresAck = message.fixedHeader().qosLevel().value() > 0;
-        boolean requiresAck = false;
+        //  int messageId = message.variableHeader().packetId();
+        //  boolean requiresAck = message.fixedHeader().qosLevel().value() > 0;
         System.out.println("PublishManager received message for topic: " + topic);
 
         if (topicManager == null) {
             System.out.println("No topic manager available, publishing message directly");
-            forwardToPublishWorker(message, requiresAck, messageId);
+            forwardToPublishWorker(message);
             return;
         }
 
@@ -97,37 +87,18 @@ public class PublishManager extends AbstractActor {
 
             if (topicExists) {
                 System.out.println("Topic exists: " + topic + ", forwarding to publish worker");
-                forwardToPublishWorker(message, requiresAck, messageId);
+                forwardToPublishWorker(message);
             } else {
                 System.out.println("Topic does not exist: " + topic + ", rejecting publish");
-                if (requiresAck) {
-                    sender().tell(
-                            new PublishManagerResponse(messageId, false),
-                            self()
-                    );
-                }
             }
         }).exceptionally(ex -> {
             System.err.println("Error checking topic existence: " + ex.getMessage());
-            if (requiresAck) {
-                sender().tell(
-                        new PublishManagerResponse(messageId, false),
-                        self()
-                );
-            }
             return null;
         });
     }
 
-    private void forwardToPublishWorker(MqttPublishMessage message, boolean requiresAck, int messageId) {
-        PublishMessageRequest request = new PublishMessageRequest(message);
+    private void forwardToPublishWorker(MqttPublishMessage message) {
+        PublishMessage.Request request = new PublishMessage.Request(message);
         publishWorkerRouter.tell(request, self());
-
-        if (requiresAck) {
-            sender().tell(
-                    new PublishManagerResponse(messageId, true),
-                    self()
-            );
-        }
     }
 }

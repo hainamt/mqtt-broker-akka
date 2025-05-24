@@ -1,41 +1,39 @@
 package org.unict.pds.actor.server;
 
-import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
-import org.unict.pds.message.publish.PublishManagerResponse;
-import org.unict.pds.message.publish.PublishMessageRelease;
-import org.unict.pds.message.subscribe.SubscribeTopicResponse;
-
-import java.util.List;
+import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.subscribe.SubscribeMessage;
+import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
 @RequiredArgsConstructor
 public class InternalHandler {
     private final MQTTManager actor;
 
-    public void handleSubscriptionResponse(SubscribeTopicResponse subscribeTopicResponse) {
-        int packetId = subscribeTopicResponse.messageId();
-        List<MqttReasonCodes.SubAck> responseCodes = subscribeTopicResponse.responseCodes();
-        int[] qosLevels = responseCodes.stream()
-                .mapToInt(MqttReasonCodes.SubAck::byteValue).toArray();
-        actor.getProtocolHandler().sendSubAck(packetId, qosLevels);
+    public void onReceiveSubscriptionResponse(SubscribeMessage.Response response) {
+        actor.getProtocolHandler().onReceiveOutboundSubAck(response);
     }
 
-    public void forwardSubscribeToTopicManager(MqttSubscribeMessage message) {
+    public void onReceiveSubscribeRequest(SubscribeMessage.Request message) {
         System.out.println("Forwarding SUBSCRIBE message to SubscriptionManager");
         actor.getSubscriptionManager().tell(message, actor.getSelf());
     }
 
-    public void forwardPublishToPublishManager(MqttPublishMessage message) {
+    public void onReceiveUnsubscribeRequest(UnsubscribeMessage.Request message) {
+        System.out.println("Forwarding UNSUBSCRIBE message to SubscriptionManager");
+        actor.getSubscriptionManager().tell(message, actor.getSelf());
+    }
+
+    public void onReceiveUnsubscribeResponse(UnsubscribeMessage.Response message) {
+        actor.getProtocolHandler().onReceiveOutboundUnsubAck(message);
+    }
+
+    public void onReceivePublishRequest(PublishMessage.Request message) {
         System.out.println("Forwarding PUBLISH message to PublishingManager");
         actor.getPublishManager().tell(message, actor.getSelf());
     }
 
-    public void handlePublishManagerResponse(PublishManagerResponse response) {
-        actor.getProtocolHandler().sendPubAck(response.messageId());
+    public void onReceivePublishMessageRelease(PublishMessage.Release release) {
+        actor.getProtocolHandler().onReceiveOutboundPublish(release);
     }
 
-    public void handlePublishMessageRelease(PublishMessageRelease message) {
-        actor.getProtocolHandler().sendMqttMessage(message.message());
-    }
 }

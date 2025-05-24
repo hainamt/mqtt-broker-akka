@@ -5,15 +5,13 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
-import io.netty.handler.codec.mqtt.MqttReasonCodes;
-import io.netty.handler.codec.mqtt.MqttSubscribeMessage;
-import io.netty.handler.codec.mqtt.MqttSubscribePayload;
-import io.netty.handler.codec.mqtt.MqttTopicSubscription;
+import io.netty.handler.codec.mqtt.*;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.SubscriptionManagerConfiguration;
+import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
+import org.unict.pds.message.subscribe.UnsubscribeMessage;
 import org.unict.pds.message.topic.CheckTopicExist;
-import org.unict.pds.message.subscribe.SubscribeTopicResponse;
 
 import java.time.Duration;
 import java.util.List;
@@ -53,14 +51,40 @@ public class SubscriptionManager extends AbstractActor {
     public Receive createReceive() {
         return receiveBuilder()
                 .match(Terminated.class, this::handleTerminated)
-                .match(MqttSubscribeMessage.class, this::processMessage)
+                .match(SubscribeMessage.Request.class, this::handleSubscribeMessage)
                 .match(SubscriberLookup.Request.class, this::handleSubscriberLookup)
+                .match(UnsubscribeMessage.Request.class, this::handleUnsubscribeMessage)
                 .build();
     }
 
-    private void processMessage(MqttSubscribeMessage message) {
-        MqttSubscribePayload payload = message.payload();
-        List<String> topicNames = payload.topicSubscriptions().stream()
+    private void handleUnsubscribeMessage(UnsubscribeMessage.Request request) {
+        MqttUnsubscribeMessage message = request.message();
+        List<String> topicNames = message.payload().topics();
+
+        final ActorRef originalSender = sender();
+        AtomicInteger pendingChecks = new AtomicInteger(topicNames.size());
+        List<MqttReasonCodes.UnsubAck> results = new ArrayList<>(Collections.nCopies(topicNames.size(), null));
+
+        for (int i = 0; i < topicNames.size(); i++) {
+            final String topic = topicNames.get(i);
+
+            boolean removed = removeSubscriber(topic, originalSender);
+            results.set(i, removed ?
+                    MqttReasonCodes.UnsubAck.SUCCESS :
+                    MqttReasonCodes.UnsubAck.NO_SUBSCRIPTION_EXISTED);
+
+            if (pendingChecks.decrementAndGet() == 0) {
+                originalSender.tell(new UnsubscribeMessage.Response(
+                        message.variableHeader().messageId(),
+                        results),
+                        getSelf());
+            }
+        }
+    }
+
+    private void handleSubscribeMessage(SubscribeMessage.Request request) {
+        MqttSubscribeMessage message = request.message();
+        List<String> topicNames = message.payload().topicSubscriptions().stream()
                 .map(MqttTopicSubscription::topicFilter)
                 .toList();
 
@@ -92,7 +116,7 @@ public class SubscriptionManager extends AbstractActor {
                 }
 
                 if (pendingChecks.decrementAndGet() == 0) {
-                    originalSender.tell(new SubscribeTopicResponse(
+                    originalSender.tell(new SubscribeMessage.Response(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -100,7 +124,7 @@ public class SubscriptionManager extends AbstractActor {
             }).exceptionally(ex -> {
                 results.set(index, MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
                 if (pendingChecks.decrementAndGet() == 0) {
-                    originalSender.tell(new SubscribeTopicResponse(
+                    originalSender.tell(new SubscribeMessage.Response(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
@@ -120,6 +144,23 @@ public class SubscriptionManager extends AbstractActor {
             System.out.println("Added subscriber to topic: " + topic +
                     ", total subscribers: " + subscribers.size());
             getContext().watch(subscriber);
+        }
+    }
+
+    private boolean removeSubscriber(String topic, ActorRef subscriber) {
+        List<ActorRef> subscribers = topicSubscribers.get(topic);
+        if (subscribers != null) {
+            boolean removed = subscribers.remove(subscriber);
+            if (topicSubscribers.values().stream().noneMatch(list -> list.contains(subscriber))) {
+                getContext().unwatch(subscriber);
+            }
+            if (removed) {
+                System.out.println("Removed subscriber from topic: " + topic +
+                        ", total subscribers: " + subscribers.size());
+            }
+            return removed;
+        } else {
+            return false;
         }
     }
 

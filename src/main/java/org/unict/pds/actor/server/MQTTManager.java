@@ -11,8 +11,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.MQTTManagerConfiguration;
-import org.unict.pds.message.publish.PublishMessageRelease;
-import org.unict.pds.message.subscribe.SubscribeTopicResponse;
+import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.subscribe.SubscribeMessage;
+import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
 @Getter
 @Setter
@@ -63,8 +64,9 @@ public class MQTTManager extends AbstractActor {
         return receiveBuilder()
                 .match(Tcp.Received.class, this::handleTcpMessage)
                 .match(Tcp.ConnectionClosed.class, this::handleConnectionClosed)
-                .match(SubscribeTopicResponse.class, internalHandler::handleSubscriptionResponse)
-                .match(PublishMessageRelease.class, internalHandler::handlePublishMessageRelease)
+                .match(SubscribeMessage.Response.class, internalHandler::onReceiveSubscriptionResponse)
+                .match(UnsubscribeMessage.Response.class, internalHandler::onReceiveUnsubscribeResponse)
+                .match(PublishMessage.Release.class, internalHandler::onReceivePublishMessageRelease)
                 .build();
     }
     

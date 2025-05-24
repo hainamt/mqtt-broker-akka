@@ -6,8 +6,7 @@ import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.PublishWorkerConfiguration;
-import org.unict.pds.message.publish.PublishMessageRelease;
-import org.unict.pds.message.publish.PublishMessageRequest;
+import org.unict.pds.message.publish.PublishMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
 
 import java.time.Duration;
@@ -53,12 +52,12 @@ public class PublishWorker extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(PublishMessageRequest.class, this::processPublishRequest)
+                .match(PublishMessage.Request.class, this::processPublishRequest)
                 .match(SubscriberLookup.Response.class, this::handleSubscriberLookupResponse)
                 .build();
     }
 
-    private void processPublishRequest(PublishMessageRequest request) {
+    private void processPublishRequest(PublishMessage.Request request) {
         MqttPublishMessage message = request.message();
         String topic = message.variableHeader().topicName();
         BlockingQueue<MqttPublishMessage> queue = topicQueues.computeIfAbsent(
@@ -181,7 +180,7 @@ public class PublishWorker extends AbstractActor {
                     subscribers.size(), topic);
             
             for (ActorRef subscriber : subscribers) {
-                subscriber.tell(new PublishMessageRelease(message), getSelf());
+                subscriber.tell(new PublishMessage.Release(message), getSelf());
             }
         }
     }
