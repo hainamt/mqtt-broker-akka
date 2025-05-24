@@ -6,8 +6,10 @@ import akka.actor.ActorSelection;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.*;
+import lombok.extern.slf4j.Slf4j;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.SubscriptionManagerConfiguration;
+import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
@@ -24,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@Slf4j
 public class SubscriptionManager extends AbstractActor {
 
     private ActorRef topicManager;
@@ -39,12 +42,26 @@ public class SubscriptionManager extends AbstractActor {
         selection.resolveOne(java.time.Duration.ofSeconds(3))
                 .whenComplete((actorRef, throwable) -> {
                     if (throwable != null) {
-                        System.err.println("Could not resolve topic manager: " + throwable.getMessage());
+                        LoggingUtils.logApplicationEvent(
+                                LoggingUtils.LogLevel.ERROR,
+                                "Could not resolve topic manager: " + throwable.getMessage(),
+                                "SubscriptionManager"
+                        );
                     } else {
                         this.topicManager = actorRef;
-                        System.out.println("SubscriptionManager Successfully resolved topic manager");
+                        LoggingUtils.logApplicationEvent(
+                                LoggingUtils.LogLevel.INFO,
+                                "Successfully resolved topic manager",
+                                "SubscriptionManager"
+                        );
                     }
                 });
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "SubscriptionManager started",
+                "SubscriptionManager"
+        );
+
     }
 
     @Override
@@ -69,9 +86,17 @@ public class SubscriptionManager extends AbstractActor {
             final String topic = topicNames.get(i);
 
             boolean removed = removeSubscriber(topic, originalSender);
+
             results.set(i, removed ?
                     MqttReasonCodes.UnsubAck.SUCCESS :
                     MqttReasonCodes.UnsubAck.NO_SUBSCRIPTION_EXISTED);
+
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.INFO,
+                    "Unsubscribe from topic '" + topic + "': " +
+                            (removed ? "SUCCESS" : "NO_SUBSCRIPTION_EXISTED"),
+                    "SubscriptionManager"
+            );
 
             if (pendingChecks.decrementAndGet() == 0) {
                 originalSender.tell(new UnsubscribeMessage.Response(
@@ -79,6 +104,15 @@ public class SubscriptionManager extends AbstractActor {
                         results),
                         getSelf());
             }
+
+            LoggingUtils.logInternalMessage(
+                    LoggingUtils.LogLevel.INFO,
+                    UnsubscribeMessage.Response.class,
+                    self().path().toString(),
+                    originalSender.path().toString(),
+                    "SubscriptionManager.InternalHandler"
+            );
+
         }
     }
 
@@ -88,8 +122,14 @@ public class SubscriptionManager extends AbstractActor {
                 .map(MqttTopicSubscription::topicFilter)
                 .toList();
 
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                SubscribeMessage.Request.class,
+                sender().path().toString(),
+                self().path().toString(),
+                "InternalHandler.SubscriptionManager"
+        );
         final ActorRef originalSender = sender();
-
         AtomicInteger pendingChecks = new AtomicInteger(topicNames.size());
         List<MqttReasonCodes.SubAck> results = new ArrayList<>(Collections.nCopies(topicNames.size(), null));
 
@@ -111,6 +151,13 @@ public class SubscriptionManager extends AbstractActor {
                         MqttReasonCodes.SubAck.GRANTED_QOS_0 :
                         MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
 
+                LoggingUtils.logApplicationEvent(
+                        LoggingUtils.LogLevel.INFO,
+                        "Topic check result for '" + topic + "': " +
+                                (topicExists ? "exists" : "does not exist"),
+                        "SubscriptionManager"
+                );
+
                 if (topicExists) {
                     addSubscriber(topic, originalSender);
                 }
@@ -123,11 +170,25 @@ public class SubscriptionManager extends AbstractActor {
                 }
             }).exceptionally(ex -> {
                 results.set(index, MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
+                LoggingUtils.logApplicationEvent(
+                        LoggingUtils.LogLevel.ERROR,
+                        "Topic check error for '" + topic + "': " + ex.getMessage(),
+                        "SubscriptionManager"
+                );
+
+
                 if (pendingChecks.decrementAndGet() == 0) {
                     originalSender.tell(new SubscribeMessage.Response(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
                     ), getSelf());
+                    LoggingUtils.logInternalMessage(
+                            LoggingUtils.LogLevel.INFO,
+                            SubscribeMessage.Response.class,
+                            self().path().toString(),
+                            originalSender.path().toString(),
+                            "Sent subscribe response for " + topicNames.size() + " topics"
+                    );
                 }
                 return null;
             });
@@ -141,8 +202,8 @@ public class SubscriptionManager extends AbstractActor {
 
         if (!subscribers.contains(subscriber)) {
             subscribers.add(subscriber);
-            System.out.println("Added subscriber to topic: " + topic +
-                    ", total subscribers: " + subscribers.size());
+//            System.out.println("Added subscriber to topic: " + topic +
+//                    ", total subscribers: " + subscribers.size());
             getContext().watch(subscriber);
         }
     }
@@ -166,15 +227,38 @@ public class SubscriptionManager extends AbstractActor {
 
     private void handleSubscriberLookup(SubscriberLookup.Request request) {
         String topic = request.topic();
-        System.out.printf("Looking up subscribers for topic: %s", topic);
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                SubscriberLookup.Request.class,
+                sender().path().toString(),
+                self().path().toString(),
+                "Looking up subscribers for topic: " + topic
+        );
+
         List<ActorRef> exactSubscribers = topicSubscribers.getOrDefault(topic, new ArrayList<>());
         SubscriberLookup.Response response = new SubscriberLookup.Response(topic, exactSubscribers);
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "Found " + exactSubscribers.size() + " subscribers for topic: " + topic,
+                "SubscriptionManager"
+        );
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                SubscriberLookup.Response.class,
+                self().path().toString(),
+                sender().path().toString(),
+                "Sent subscriber lookup response for topic: " + topic
+        );
         sender().tell(response, self());
     }
 
     private void handleTerminated(Terminated terminatedEvent) {
         ActorRef terminatedSubscriber = terminatedEvent.getActor();
-        System.out.println("Subscriber terminated: " + terminatedSubscriber);
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "Subscriber terminated: " + terminatedSubscriber,
+                "SubscriptionManager"
+        );
         topicSubscribers.values().forEach(subscribers -> subscribers.remove(terminatedSubscriber));
     }
 

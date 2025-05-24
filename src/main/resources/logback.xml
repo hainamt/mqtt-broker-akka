@@ -1,0 +1,64 @@
+<configuration>
+    <!-- Console appender for general use -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Protocol log file -->
+    <appender name="PROTOCOL_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/protocol.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/protocol.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{ISO8601} [%X{level}] [%X{direction}] Type: %X{messageType} | Src: %X{source} | Dst: %X{destination} | %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Internal message log file -->
+    <appender name="INTERNAL_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/internal.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/internal.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{ISO8601} [%X{level}] | MsgClass: %X{messageClass} | Src: %X{sourceActor} | Dst: %X{destinationActor} | %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Application log file -->
+    <appender name="APPLICATION_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/application.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{ISO8601} [%X{level}] [%X{component}] %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Define loggers -->
+    <logger name="protocol" level="INFO" additivity="false">
+        <appender-ref ref="PROTOCOL_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <logger name="internal" level="INFO" additivity="false">
+        <appender-ref ref="INTERNAL_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <logger name="application" level="INFO" additivity="false">
+        <appender-ref ref="APPLICATION_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+</configuration>

@@ -37,7 +37,7 @@ public class PublishWorker extends AbstractActor {
                         System.err.println("PublishWorker could not resolve subscription manager: " + throwable.getMessage());
                     } else {
                         this.subscriptionManager = actorRef;
-                        System.out.println("PublishWorker successfully resolved subscription manager");
+//                        System.out.println("PublishWorker successfully resolved subscription manager");
                     }
                 });
     }

@@ -7,56 +7,58 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
 import java.util.List;
 
+@Slf4j
 @RequiredArgsConstructor
 public class ProtocolHandler {
     private final MQTTManager actor;
     private final EmbeddedChannel encodeChannel = new EmbeddedChannel(MqttEncoder.INSTANCE);
 
     public void processProtocolMessage(MqttMessage message) {
+        LoggingUtils.logProtocolMessage(
+                LoggingUtils.LogLevel.INFO,
+                message.fixedHeader().messageType(),
+                actor.getSender().path().address().toString(),
+                actor.getSelf().path().address().toString(),
+                true
+        );
+
         switch (message.fixedHeader().messageType()) {
             case SUBSCRIBE:
-                System.out.println("Handling SUBSCRIBE message");
                 onReceiveInBoundSubscribe((MqttSubscribeMessage) message);
                 break;
 
             case UNSUBSCRIBE:
-                System.out.println("Handling UNSUBSCRIBE message");
                 onReceiveInboundUnsubscribe((MqttUnsubscribeMessage) message);
                 break;
 
             case PUBLISH:
-                System.out.println("Handling PUBLISH message");
                 onReceiveInboundPublish((MqttPublishMessage) message);
                 break;
 
             case CONNECT:
-                System.out.println("Handling CONNECT message");
-                System.out.println("Client: " + actor.getSender().path().address().toString());
                 onReceiveInboundConnect();
                 break;
 
             case DISCONNECT:
-                System.out.println("Handling DISCONNECT message");
                 onReceiveInboundDisconnect();
                 break;
 
             case PINGREQ:
-                System.out.println("Handling PING request");
                 onReceiveInboundPing();
                 break;
 
             default:
-                System.out.println("Received unhandled message type: " + message.fixedHeader().messageType());
                 break;
         }
     }
-
 
     private void onReceiveInboundConnect() {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
@@ -71,12 +73,10 @@ public class ProtocolHandler {
                 false);
 
         MqttConnAckMessage connAckMessage = new MqttConnAckMessage(fixedHeader, variableHeader);
-        System.out.println("Sending CONNACK message");
         sendMqttMessage(connAckMessage);
     }
 
     private void onReceiveInboundDisconnect() {
-        System.out.println("Client disconnected");
         actor.getTcpConnection().tell(TcpMessage.close(), actor.getSelf());
     }
 
@@ -89,7 +89,6 @@ public class ProtocolHandler {
                 0);
 
         MqttMessage pingRespMessage = new MqttMessage(fixedHeader);
-        System.out.println("Sending PINGRESP message");
         sendMqttMessage(pingRespMessage);
     }
 
@@ -112,8 +111,6 @@ public class ProtocolHandler {
         MqttMessageIdVariableHeader variableHeader = MqttMessageIdVariableHeader.from(packetId);
         MqttSubAckPayload payload = new MqttSubAckPayload(qosLevels);
         MqttSubAckMessage subAckMessage = new MqttSubAckMessage(fixedHeader, variableHeader, payload);
-
-        System.out.println("Sending SUBACK message");
         sendMqttMessage(subAckMessage);
     }
 
@@ -145,23 +142,31 @@ public class ProtocolHandler {
     }
 
     public void onReceiveInboundPublish(MqttPublishMessage message) {
-        System.out.println("Processing PUBLISH message to topic: " + message.variableHeader().topicName());
         actor.getInternalHandler().onReceivePublishRequest(new PublishMessage.Request(message));
     }
 
     public void onReceiveOutboundPublish(PublishMessage.Release message) {
-        System.out.println("Processing PUBLISH message release to topic: " + message.message().variableHeader().topicName());
         sendMqttMessage(message.message());
     }
 
     public void sendMqttMessage(MqttMessage message) {
+        LoggingUtils.logProtocolMessage(
+                LoggingUtils.LogLevel.INFO,
+                message.fixedHeader().messageType(),
+                actor.getSelf().path().address().toString(),
+                actor.getSender().path().address().toString(),
+                false
+        );
+
         encodeChannel.writeOutbound(message);
         ByteBuf msgBuf = encodeChannel.readOutbound();
         if (msgBuf != null) {
             actor.getTcpConnection().tell(TcpMessage.write(ByteString.fromByteBuffer(msgBuf.nioBuffer())),
                     actor.getSelf());
         } else {
-            System.err.println("Failed to encode MQTT message");
+            LoggingUtils.logApplicationEvent(LoggingUtils.LogLevel.ERROR,
+                    "Failed to encode MQTT Message",
+                    actor.getClass().getSimpleName());
         }
     }
 
