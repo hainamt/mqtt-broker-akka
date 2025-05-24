@@ -70,6 +70,7 @@ public class ProtocolHandler {
 
     private void handleDisconnect() {
         System.out.println("Client disconnected");
+        actor.getTcpConnection().tell(TcpMessage.close(), actor.getSelf());
     }
 
     private void handlePingRequest() {
@@ -114,7 +115,7 @@ public class ProtocolHandler {
         sendMqttMessage(message.message());
     }
 
-    public void sendPubAck(int packetId, boolean success) {
+    public void sendPubAck(int packetId) {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
                 MqttMessageType.PUBACK,
                 false,

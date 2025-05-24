@@ -3,6 +3,7 @@ package org.unict.pds.actor.subscription;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
+import akka.actor.Terminated;
 import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.MqttReasonCodes;
 import io.netty.handler.codec.mqtt.MqttSubscribeMessage;
@@ -37,14 +38,13 @@ public class SubscriptionManager extends AbstractActor {
                 .get(getContext().getSystem()).subscriptionManagerConfig();
 
         ActorSelection selection = getContext().actorSelection(subscriptionManagerConfig.topicManagerAddress());
-
         selection.resolveOne(java.time.Duration.ofSeconds(3))
                 .whenComplete((actorRef, throwable) -> {
                     if (throwable != null) {
                         System.err.println("Could not resolve topic manager: " + throwable.getMessage());
                     } else {
                         this.topicManager = actorRef;
-                        System.out.println("Successfully resolved topic manager");
+                        System.out.println("SubscriptionManager Successfully resolved topic manager");
                     }
                 });
     }
@@ -52,6 +52,7 @@ public class SubscriptionManager extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
+                .match(Terminated.class, this::handleTerminated)
                 .match(MqttSubscribeMessage.class, this::processMessage)
                 .match(SubscriberLookup.Request.class, this::handleSubscriberLookup)
                 .build();
@@ -91,7 +92,6 @@ public class SubscriptionManager extends AbstractActor {
                 }
 
                 if (pendingChecks.decrementAndGet() == 0) {
-                    // Use the captured sender reference here, not getSender()
                     originalSender.tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
@@ -100,7 +100,6 @@ public class SubscriptionManager extends AbstractActor {
             }).exceptionally(ex -> {
                 results.set(index, MqttReasonCodes.SubAck.UNSPECIFIED_ERROR);
                 if (pendingChecks.decrementAndGet() == 0) {
-                    // Use the captured sender reference here too
                     originalSender.tell(new SubscribeTopicResponse(
                             message.idAndPropertiesVariableHeader().messageId(),
                             results
@@ -114,9 +113,7 @@ public class SubscriptionManager extends AbstractActor {
 
     private void addSubscriber(String topic, ActorRef subscriber) {
         List<ActorRef> subscribers = topicSubscribers.computeIfAbsent(
-                topic,
-                k -> new CopyOnWriteArrayList<>()
-        );
+                topic, k -> new CopyOnWriteArrayList<>());
 
         if (!subscribers.contains(subscriber)) {
             subscribers.add(subscriber);
@@ -132,6 +129,12 @@ public class SubscriptionManager extends AbstractActor {
         List<ActorRef> exactSubscribers = topicSubscribers.getOrDefault(topic, new ArrayList<>());
         SubscriberLookup.Response response = new SubscriberLookup.Response(topic, exactSubscribers);
         sender().tell(response, self());
+    }
+
+    private void handleTerminated(Terminated terminatedEvent) {
+        ActorRef terminatedSubscriber = terminatedEvent.getActor();
+        System.out.println("Subscriber terminated: " + terminatedSubscriber);
+        topicSubscribers.values().forEach(subscribers -> subscribers.remove(terminatedSubscriber));
     }
 
 }

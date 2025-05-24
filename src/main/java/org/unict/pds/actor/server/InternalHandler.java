@@ -5,7 +5,6 @@ import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
 import org.unict.pds.message.publish.PublishManagerResponse;
 import org.unict.pds.message.publish.PublishMessageRelease;
-import org.unict.pds.message.publish.PublishMessageRequest;
 import org.unict.pds.message.subscribe.SubscribeTopicResponse;
 
 import java.util.List;
@@ -13,7 +12,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InternalHandler {
     private final MQTTManager actor;
-    private final EmbeddedChannel encodeChannel = new EmbeddedChannel(MqttEncoder.INSTANCE);
 
     public void handleSubscriptionResponse(SubscribeTopicResponse subscribeTopicResponse) {
         int packetId = subscribeTopicResponse.messageId();
@@ -34,7 +32,7 @@ public class InternalHandler {
     }
 
     public void handlePublishManagerResponse(PublishManagerResponse response) {
-        actor.getProtocolHandler().sendPubAck(response.messageId(), response.success());
+        actor.getProtocolHandler().sendPubAck(response.messageId());
     }
 
     public void handlePublishMessageRelease(PublishMessageRelease message) {

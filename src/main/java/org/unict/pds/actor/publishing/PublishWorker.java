@@ -154,7 +154,7 @@ public class PublishWorker extends AbstractActor {
             if (subscriptionManager != null) {
                 lookupInProgress = true;
                 System.out.println("Looking up subscribers for topic: " + topic);
-                pendingMessages.offer(message)
+                pendingMessages.offer(message);
 
                 SubscriberLookup.Request request = new SubscriberLookup.Request(topic);
                 Patterns.ask(subscriptionManager, request, lookupTimeout)
