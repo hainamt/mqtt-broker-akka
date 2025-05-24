@@ -4,9 +4,7 @@ import akka.actor.ActorRef;
 
 import java.util.List;
 
-public record SubscriberLookup(
-        String topic
-) {
+public record SubscriberLookup() {
     public record Request(
             String topic
     ) {}

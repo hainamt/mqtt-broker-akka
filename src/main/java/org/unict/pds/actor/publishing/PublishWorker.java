@@ -6,7 +6,7 @@ import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.PublishWorkerConfiguration;
-import org.unict.pds.message.publish.PublishWorkerRequest;
+import org.unict.pds.message.publish.PublishMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
 
 import java.time.Duration;
@@ -23,9 +23,8 @@ public class PublishWorker extends AbstractActor {
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
     
     private ActorRef subscriptionManager;
-    private final Duration lookupTimeout = Duration.ofSeconds(3);
+    private final Duration lookupTimeout = Duration.ofSeconds(10);
 
-    
     @Override
     public void preStart() {
         PublishWorkerConfiguration config = ConfigurationExtension.getInstance()
@@ -35,10 +34,10 @@ public class PublishWorker extends AbstractActor {
                 .resolveOne(Duration.ofSeconds(3))
                 .whenComplete((actorRef, throwable) -> {
                     if (throwable != null) {
-                        System.err.println("Could not resolve subscription manager: " + throwable.getMessage());
+                        System.err.println("PublishWorker could not resolve subscription manager: " + throwable.getMessage());
                     } else {
                         this.subscriptionManager = actorRef;
-                        System.out.println("Successfully resolved subscription manager");
+//                        System.out.println("PublishWorker successfully resolved subscription manager");
                     }
                 });
     }
@@ -53,12 +52,12 @@ public class PublishWorker extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(PublishWorkerRequest.class, this::processPublishRequest)
+                .match(PublishMessage.Request.class, this::processPublishRequest)
                 .match(SubscriberLookup.Response.class, this::handleSubscriberLookupResponse)
                 .build();
     }
 
-    private void processPublishRequest(PublishWorkerRequest request) {
+    private void processPublishRequest(PublishMessage.Request request) {
         MqttPublishMessage message = request.message();
         String topic = message.variableHeader().topicName();
         BlockingQueue<MqttPublishMessage> queue = topicQueues.computeIfAbsent(
@@ -115,7 +114,6 @@ public class PublishWorker extends AbstractActor {
         }
         
         public void processPendingMessages() {
-            // Process any messages that were waiting for subscriber information
             MqttPublishMessage pendingMessage;
             while ((pendingMessage = pendingMessages.poll()) != null) {
                 distributeMessageToSubscribers(pendingMessage);
@@ -156,14 +154,13 @@ public class PublishWorker extends AbstractActor {
                 lookupInProgress = true;
                 System.out.println("Looking up subscribers for topic: " + topic);
                 pendingMessages.offer(message);
-                
-                SubscriberLookup request = new SubscriberLookup(topic);
+
+                SubscriberLookup.Request request = new SubscriberLookup.Request(topic);
                 Patterns.ask(subscriptionManager, request, lookupTimeout)
                         .thenApply(response -> (SubscriberLookup.Response) response)
                         .thenAccept(response -> getSelf().tell(response, ActorRef.noSender()))
                         .exceptionally(ex -> {
-                            System.out.printf("Error looking up subscribers for topic %s: %s%n",
-                                    topic, ex.getMessage());
+                            System.out.printf("Error looking up subscribers for topic %s: %s%n", topic, ex.getMessage());
                             lookupInProgress = false;
                             return null;
                         });
@@ -171,7 +168,7 @@ public class PublishWorker extends AbstractActor {
                 System.out.printf("SubscriptionManager not available, cannot distribute message for topic: %s%n", topic);
             }
         }
-        
+
         private void distributeMessageToSubscribers(MqttPublishMessage message) {
             if (subscribers == null || subscribers.isEmpty()) {
                 System.out.printf("No subscribers for topic: %s%n", topic);
@@ -181,11 +178,27 @@ public class PublishWorker extends AbstractActor {
             System.out.printf("Distributing message to %s subscribers for topic: %s%n",
                     subscribers.size(), topic);
             
-            for (ActorRef subscriber : subscribers) {
-                // Create a message for the subscriber with the MQTT message
-                // You might want to create a specific message class for this
-                subscriber.tell(message, getSelf());
+            if (!subscribers.isEmpty()) {
+                subscribers.get(0).tell(new PublishMessage.Release(message), getSelf());
             }
+            
+            for (int i = 1; i < subscribers.size(); i++) {
+                // Create a copy of the message with retained content
+                MqttPublishMessage messageCopy = copyMqttPublishMessage(message);
+                subscribers.get(i).tell(new PublishMessage.Release(messageCopy), getSelf());
+            }
+        }
+        
+        private MqttPublishMessage copyMqttPublishMessage(MqttPublishMessage original) {
+            if (original.content() != null) {
+                original.content().retain();
+            }
+            
+            return new MqttPublishMessage(
+                    original.fixedHeader(),
+                    original.variableHeader(),
+                    original.content()
+            );
         }
     }
 }

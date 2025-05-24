@@ -7,50 +7,60 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.mqtt.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.unict.pds.logging.LoggingUtils;
+import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.subscribe.SubscribeMessage;
+import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
+import java.util.List;
+
+@Slf4j
 @RequiredArgsConstructor
 public class ProtocolHandler {
     private final MQTTManager actor;
     private final EmbeddedChannel encodeChannel = new EmbeddedChannel(MqttEncoder.INSTANCE);
 
-
     public void processProtocolMessage(MqttMessage message) {
+        LoggingUtils.logProtocolMessage(
+                LoggingUtils.LogLevel.INFO,
+                message.fixedHeader().messageType(),
+                actor.getSender().path().address().toString(),
+                actor.getSelf().path().address().toString(),
+                true
+        );
+
         switch (message.fixedHeader().messageType()) {
             case SUBSCRIBE:
-                System.out.println("Handling SUBSCRIBE message");
-                handleSubscribe((MqttSubscribeMessage) message);
+                onReceiveInBoundSubscribe((MqttSubscribeMessage) message);
+                break;
+
+            case UNSUBSCRIBE:
+                onReceiveInboundUnsubscribe((MqttUnsubscribeMessage) message);
                 break;
 
             case PUBLISH:
-                System.out.println("Handling PUBLISH message");
-                handlePublish((MqttPublishMessage) message);
+                onReceiveInboundPublish((MqttPublishMessage) message);
                 break;
 
             case CONNECT:
-                System.out.println("Handling CONNECT message");
-                handleConnect();
+                onReceiveInboundConnect();
                 break;
 
             case DISCONNECT:
-                System.out.println("Handling DISCONNECT message");
-                handleDisconnect();
+                onReceiveInboundDisconnect();
                 break;
 
             case PINGREQ:
-                System.out.println("Handling PING request");
-                handlePingRequest();
+                onReceiveInboundPing();
                 break;
 
             default:
-                System.out.println("Received unhandled message type: " + message.fixedHeader().messageType());
                 break;
         }
     }
 
-
-    private void handleConnect() {
-        System.out.println("Processing CONNECT message");
-
+    private void onReceiveInboundConnect() {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
                 MqttMessageType.CONNACK,
                 false,
@@ -63,15 +73,14 @@ public class ProtocolHandler {
                 false);
 
         MqttConnAckMessage connAckMessage = new MqttConnAckMessage(fixedHeader, variableHeader);
-        System.out.println("Sending CONNACK message");
         sendMqttMessage(connAckMessage);
     }
 
-    private void handleDisconnect() {
-        System.out.println("Client disconnected");
+    private void onReceiveInboundDisconnect() {
+        actor.getTcpConnection().tell(TcpMessage.close(), actor.getSelf());
     }
 
-    private void handlePingRequest() {
+    private void onReceiveInboundPing() {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
                 MqttMessageType.PINGRESP,
                 false,
@@ -80,15 +89,19 @@ public class ProtocolHandler {
                 0);
 
         MqttMessage pingRespMessage = new MqttMessage(fixedHeader);
-        System.out.println("Sending PINGRESP message");
         sendMqttMessage(pingRespMessage);
     }
 
-    private void handleSubscribe(MqttSubscribeMessage message) {
-        actor.getInternalHandler().forwardSubscribeToTopicManager(message);
+    private void onReceiveInBoundSubscribe(MqttSubscribeMessage message) {
+        actor.getInternalHandler().onReceiveSubscribeRequest(new SubscribeMessage.Request(message));
     }
 
-    public void sendSubAck(int packetId, int[] qosLevels) {
+    public void onReceiveOutboundSubAck(SubscribeMessage.Response response) {
+        int packetId = response.messageId();
+        List<MqttReasonCodes.SubAck> responseCodes = response.responseCodes();
+        int[] qosLevels = responseCodes.stream()
+                .mapToInt(MqttReasonCodes.SubAck::byteValue).toArray();
+
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
                 MqttMessageType.SUBACK,
                 false,
@@ -98,38 +111,62 @@ public class ProtocolHandler {
         MqttMessageIdVariableHeader variableHeader = MqttMessageIdVariableHeader.from(packetId);
         MqttSubAckPayload payload = new MqttSubAckPayload(qosLevels);
         MqttSubAckMessage subAckMessage = new MqttSubAckMessage(fixedHeader, variableHeader, payload);
-
-        System.out.println("Sending SUBACK message");
         sendMqttMessage(subAckMessage);
     }
 
-    private void handlePublish(MqttPublishMessage message) {
-        System.out.println("Processing PUBLISH message to topic: " + message.variableHeader().topicName());
-        actor.getInternalHandler().forwardPublishToPublishManager(message);
+    public void onReceiveInboundUnsubscribe(MqttUnsubscribeMessage message) {
+        actor.getInternalHandler().onReceiveUnsubscribeRequest(new UnsubscribeMessage.Request(message));
     }
 
-    public void sendPubAck(int packetId, boolean success) {
+    public void onReceiveOutboundUnsubAck(UnsubscribeMessage.Response response) {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
-                MqttMessageType.PUBACK,
+                MqttMessageType.UNSUBACK,
                 false,
                 MqttQoS.AT_MOST_ONCE,
                 false,
-                2);
+                0);
 
-        MqttMessageIdVariableHeader variableHeader = MqttMessageIdVariableHeader.from(packetId);
+        MqttMessageIdVariableHeader variableHeader =
+                MqttMessageIdVariableHeader.from(response.messageId());
+        short[] reasonCodes = new short[response.reasonCodes().size()];
+        for (int i = 0; i < response.reasonCodes().size(); i++) {
+            reasonCodes[i] = response.reasonCodes().get(i).byteValue();
+        }
 
-        MqttPubAckMessage pubAckMessage = new MqttPubAckMessage(fixedHeader, variableHeader);
-        System.out.println("Sending PUBACK message");
-        sendMqttMessage(pubAckMessage);
+        MqttUnsubAckMessage unsubAckMessage = new MqttUnsubAckMessage(
+                fixedHeader,
+                variableHeader,
+                new MqttUnsubAckPayload(reasonCodes));
+        sendMqttMessage(unsubAckMessage);
+
+    }
+
+    public void onReceiveInboundPublish(MqttPublishMessage message) {
+        actor.getInternalHandler().onReceivePublishRequest(new PublishMessage.Request(message));
+    }
+
+    public void onReceiveOutboundPublish(PublishMessage.Release message) {
+        sendMqttMessage(message.message());
     }
 
     public void sendMqttMessage(MqttMessage message) {
+        LoggingUtils.logProtocolMessage(
+                LoggingUtils.LogLevel.INFO,
+                message.fixedHeader().messageType(),
+                actor.getSelf().path().address().toString(),
+                actor.getSender().path().address().toString(),
+                false
+        );
+
         encodeChannel.writeOutbound(message);
         ByteBuf msgBuf = encodeChannel.readOutbound();
         if (msgBuf != null) {
-            actor.getSender().tell(TcpMessage.write(ByteString.fromByteBuffer(msgBuf.nioBuffer())), actor.getSelf());
+            actor.getTcpConnection().tell(TcpMessage.write(ByteString.fromByteBuffer(msgBuf.nioBuffer())),
+                    actor.getSelf());
         } else {
-            System.err.println("Failed to encode MQTT message");
+            LoggingUtils.logApplicationEvent(LoggingUtils.LogLevel.ERROR,
+                    "Failed to encode MQTT Message",
+                    actor.getClass().getSimpleName());
         }
     }
 
