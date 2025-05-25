@@ -2,10 +2,10 @@ package org.unict.pds;
 
 import akka.actor.ActorSystem;
 import akka.actor.Props;
-import org.unict.pds.actor.TCPMQTTServer;
+import org.unict.pds.actor.server.TCPMQTTServer;
 import org.unict.pds.actor.publishing.PublishManager;
 import org.unict.pds.actor.subscription.SubscriptionManager;
-import org.unict.pds.actor.TopicManager;
+import org.unict.pds.actor.topic.TopicManager;
 
 public class Main {
     public static void main(String[] args) {

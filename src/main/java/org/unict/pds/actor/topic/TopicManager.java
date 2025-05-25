@@ -1,4 +1,4 @@
-package org.unict.pds.actor;
+package org.unict.pds.actor.topic;
 
 import akka.actor.AbstractActor;
 import lombok.Getter;

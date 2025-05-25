@@ -4,7 +4,7 @@ import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 
 
-public record TopicManagerConfiguration(boolean autoCreateTopic) {
+public record TopicManagerConfiguration(boolean autoCreateTopic) implements LoadableActorConfig{
     public static TopicManagerConfiguration load() {
         Config config = ConfigFactory.load().getConfig("topic-manager");
         return new TopicManagerConfiguration(

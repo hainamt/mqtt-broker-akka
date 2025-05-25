@@ -25,7 +25,7 @@ public class ProtocolHandler {
         LoggingUtils.logProtocolMessage(
                 LoggingUtils.LogLevel.INFO,
                 message.fixedHeader().messageType(),
-                actor.getSender().path().address().toString(),
+                actor.getTcpConnection().path().address().toString(),
                 actor.getSelf().path().address().toString(),
                 true
         );

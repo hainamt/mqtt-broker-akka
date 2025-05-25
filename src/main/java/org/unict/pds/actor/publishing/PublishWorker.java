@@ -2,14 +2,11 @@ package org.unict.pds.actor.publishing;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
-import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
-import org.unict.pds.configuration.ConfigurationExtension;
-import org.unict.pds.configuration.PublishWorkerConfiguration;
+import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -21,25 +18,14 @@ public class PublishWorker extends AbstractActor {
     private final Map<String, TopicWorker> topicWorkers = new ConcurrentHashMap<>();
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
-    
-    private ActorRef subscriptionManager;
-    private final Duration lookupTimeout = Duration.ofSeconds(10);
+
+    private ActorRef publishManager;
 
     @Override
     public void preStart() {
-        PublishWorkerConfiguration config = ConfigurationExtension.getInstance()
-                .get(getContext().getSystem()).publishWorkerConfig();
-                
-        getContext().actorSelection(config.subscriberManagerAddress())
-                .resolveOne(Duration.ofSeconds(3))
-                .whenComplete((actorRef, throwable) -> {
-                    if (throwable != null) {
-                        System.err.println("PublishWorker could not resolve subscription manager: " + throwable.getMessage());
-                    } else {
-                        this.subscriptionManager = actorRef;
-//                        System.out.println("PublishWorker successfully resolved subscription manager");
-                    }
-                });
+//        PublishWorkerConfiguration config = ConfigurationExtension.getInstance()
+//                .get(getContext().getSystem()).publishWorkerConfig();
+        publishManager = getContext().parent();
     }
 
     @Override
@@ -81,8 +67,12 @@ public class PublishWorker extends AbstractActor {
         String topic = response.topic();
         List<ActorRef> subscribers = response.subscribers();
 
-        System.out.println("Received subscribers for topic: " +  topic +
-                ", number of subscribers: " + subscribers.size());
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "Received subscribers for topic: " + topic + ", number of subscribers: " + subscribers.size(),
+                "PublishWorker"
+        );
+
         
         TopicWorker worker = topicWorkers.get(topic);
         if (worker != null) {
@@ -132,14 +122,23 @@ public class PublishWorker extends AbstractActor {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
-                    System.err.println("Error processing message for topic " + topic + ": " + e.getMessage());
-                    e.printStackTrace();
+                    LoggingUtils.logApplicationEvent(
+                            LoggingUtils.LogLevel.ERROR,
+                            "Error processing message for topic " + topic + ": " + e.getMessage(),
+                            "PublishWorker"
+                    );
+                    throw e;
                 }
             }
         }
         
         private void processMessage(MqttPublishMessage message) {
-            System.out.println("Processing message for topic: " + topic);
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.INFO,
+                    "Processing message for topic: " + topic,
+                    "PublishWorker"
+            );
+
             if (subscribers == null && !lookupInProgress) {
                 lookupSubscribers(message);
             } else if (lookupInProgress) {
@@ -148,42 +147,40 @@ public class PublishWorker extends AbstractActor {
                 distributeMessageToSubscribers(message);
             }
         }
-        
-        private void lookupSubscribers(MqttPublishMessage message) {
-            if (subscriptionManager != null) {
-                lookupInProgress = true;
-                System.out.println("Looking up subscribers for topic: " + topic);
-                pendingMessages.offer(message);
 
-                SubscriberLookup.Request request = new SubscriberLookup.Request(topic);
-                Patterns.ask(subscriptionManager, request, lookupTimeout)
-                        .thenApply(response -> (SubscriberLookup.Response) response)
-                        .thenAccept(response -> getSelf().tell(response, ActorRef.noSender()))
-                        .exceptionally(ex -> {
-                            System.out.printf("Error looking up subscribers for topic %s: %s%n", topic, ex.getMessage());
-                            lookupInProgress = false;
-                            return null;
-                        });
-            } else {
-                System.out.printf("SubscriptionManager not available, cannot distribute message for topic: %s%n", topic);
-            }
+        private void lookupSubscribers(MqttPublishMessage message) {
+            lookupInProgress = true;
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.INFO,
+                    "Looking up subscribers for topic: " + topic,
+                    "PublishWorker"
+            );
+            pendingMessages.offer(message);
+            SubscriberLookup.Request request = new SubscriberLookup.Request(topic);
+            publishManager.tell(request, getSelf());
         }
 
         private void distributeMessageToSubscribers(MqttPublishMessage message) {
             if (subscribers == null || subscribers.isEmpty()) {
-                System.out.printf("No subscribers for topic: %s%n", topic);
+//                LoggingUtils.logApplicationEvent(
+//                        LoggingUtils.LogLevel.INFO,
+//                        "No subscribers for topic:" + topic,
+//                        "PublishWorker"
+//                );
                 return;
             }
-            
-            System.out.printf("Distributing message to %s subscribers for topic: %s%n",
-                    subscribers.size(), topic);
+
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.INFO,
+                    "Distributing message to " + subscribers.size() + " subscribers for topic: " + topic,
+                    "PublishWorker"
+            );
             
             if (!subscribers.isEmpty()) {
                 subscribers.get(0).tell(new PublishMessage.Release(message), getSelf());
             }
             
             for (int i = 1; i < subscribers.size(); i++) {
-                // Create a copy of the message with retained content
                 MqttPublishMessage messageCopy = copyMqttPublishMessage(message);
                 subscribers.get(i).tell(new PublishMessage.Release(messageCopy), getSelf());
             }
