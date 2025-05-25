@@ -15,6 +15,8 @@ import java.util.Set;
 public class Authenticator extends AbstractActor {
     private SecurityConfiguration securityConfig;
     private Connection dbConnection;
+    private String usersTable;
+    private String rolesTable;
 
     @Override
     public Receive createReceive() {
@@ -82,6 +84,9 @@ public class Authenticator extends AbstractActor {
         this.securityConfig = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).securityConfig();
 
+        this.usersTable = createQuotedTableName(securityConfig.usersTable());
+        this.rolesTable = createQuotedTableName(securityConfig.rolesTable());
+
         try {
             dbConnection = DriverManager.getConnection(
                     securityConfig.jdbcUrl(),
@@ -120,7 +125,7 @@ public class Authenticator extends AbstractActor {
     }
 
     private boolean authenticate(String username, String password) throws SQLException {
-        String sql = "SELECT password_hash FROM " + securityConfig.usersTable() + " WHERE username = ?";
+        String sql = "SELECT password_hash FROM " + usersTable + " WHERE username = ?";
         try (PreparedStatement statement = dbConnection.prepareStatement(sql)) {
             statement.setString(1, username);
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -133,14 +138,16 @@ public class Authenticator extends AbstractActor {
         return false;
     }
 
+
+
     private ConnectWithAuthentication.Role getUserRole(String username) throws SQLException {
         Set<String> pubAllowedTopics = new HashSet<>();
         Set<String> subAllowedTopics = new HashSet<>();
 
         String sql = "SELECT t.topic_name, p.can_publish, p.can_subscribe " +
-                "FROM " + securityConfig.rolesTable() + " p " +
+                "FROM " + rolesTable + " p " +
                 "JOIN topics t ON p.topic_id = t.id " +
-                "JOIN " + securityConfig.usersTable() + " u ON p.user_id = u.id " +
+                "JOIN " + usersTable + " u ON p.user_id = u.id " +
                 "WHERE u.username = ?";
 
         try (PreparedStatement stmt = dbConnection.prepareStatement(sql)) {
@@ -161,6 +168,18 @@ public class Authenticator extends AbstractActor {
             }
         }
         return new ConnectWithAuthentication.Role(pubAllowedTopics, subAllowedTopics);
+    }
+
+
+    private String createQuotedTableName(String fullTableName) {
+        String[] parts = fullTableName.split("\\.", 2);
+        if (parts.length == 2) {
+            // Schema and table provided
+            return "\"" + parts[0] + "\".\"" + parts[1] + "\"";
+        } else {
+            // Only table name provided
+            return "\"" + fullTableName + "\"";
+        }
     }
 
 }
