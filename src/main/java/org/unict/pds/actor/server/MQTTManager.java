@@ -12,9 +12,11 @@ import lombok.Setter;
 import org.unict.pds.actor.ActorResolutionUtils;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.MQTTManagerConfiguration;
+import org.unict.pds.configuration.SecurityConfiguration;
 import org.unict.pds.exception.CriticalActorCouldNotBeResolved;
 import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.security.ConnectWithAuthentication;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
@@ -25,6 +27,8 @@ public class MQTTManager extends AbstractActor {
     private final EmbeddedChannel decodeChannel = new EmbeddedChannel(new MqttDecoder(65536));
     private ActorRef subscriptionManager;
     private ActorRef publishManager;
+    private ActorRef authenticator;
+    private boolean needAuthenticated = false;
 
     private final ActorRef tcpConnection;
     private final ProtocolHandler protocolHandler = new ProtocolHandler(this);
@@ -33,10 +37,10 @@ public class MQTTManager extends AbstractActor {
     
     @Override
     public void preStart() {
-
         MQTTManagerConfiguration configuration = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).mqttManagerConfig();
-
+        SecurityConfiguration securityConfiguration = ConfigurationExtension.getInstance()
+                .get(getContext().getSystem()).securityConfig();
         try {
             this.subscriptionManager = ActorResolutionUtils.resolveActor(
                     getContext().getSystem(),
@@ -53,7 +57,17 @@ public class MQTTManager extends AbstractActor {
                     "MQTTManager",
                     true
             );
-            System.out.println("Successfully resolved Publish manager");
+
+            if (securityConfiguration.authenticationEnabled()) {
+                this.authenticator = ActorResolutionUtils.resolveActor(
+                        getContext().getSystem(),
+                        configuration.authenticatorAddress(),
+                        configuration.resolutionTimeout(),
+                        "MQTTManager",
+                        true);
+                this.needAuthenticated = true;
+            }
+
         } catch (CriticalActorCouldNotBeResolved e) {
             LoggingUtils.logApplicationEvent(
                     LoggingUtils.LogLevel.ERROR,
@@ -82,6 +96,7 @@ public class MQTTManager extends AbstractActor {
                 .match(Tcp.ConnectionClosed.class, this::handleConnectionClosed)
                 .match(SubscribeMessage.Response.class, internalHandler::onReceiveSubscriptionResponse)
                 .match(UnsubscribeMessage.Response.class, internalHandler::onReceiveUnsubscribeResponse)
+                .match(ConnectWithAuthentication.Response.class, internalHandler::onReceiveConnectWithAuthResponse)
                 .match(PublishMessage.Release.class, internalHandler::onReceivePublishMessageRelease)
                 .build();
     }

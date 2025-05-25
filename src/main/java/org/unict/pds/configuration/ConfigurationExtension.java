@@ -26,6 +26,7 @@ public class ConfigurationExtension
     }
 
     public record ConfigExt(
+                        SecurityConfiguration securityConfig,
                         TCPConfiguration tcpConfig,
                          MQTTManagerConfiguration mqttManagerConfig,
                          TopicManagerConfiguration topicManagerConfig,
@@ -35,6 +36,7 @@ public class ConfigurationExtension
         public static ConfigExt load() {
             try {
                 return new ConfigExt(
+                        SecurityConfiguration.load(),
                         TCPConfiguration.load(),
                         MQTTManagerConfiguration.load(),
                         TopicManagerConfiguration.load(),
