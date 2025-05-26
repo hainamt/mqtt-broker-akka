@@ -174,10 +174,6 @@ public class PublishManager extends AbstractActor {
                     );
                     return null;
                 });
-
-                int workerIndex = Math.abs(topic.hashCode()) % numWorkers;
-                ActorRef worker = getContext().child("publish-worker-" + workerIndex).get();
-                worker.tell(request, getSelf());
             } else {
                 LoggingUtils.logApplicationEvent(
                         LoggingUtils.LogLevel.WARN,

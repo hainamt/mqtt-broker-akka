@@ -26,6 +26,10 @@ public class Authenticator extends AbstractActor {
     }
 
     private void handleConnectWithAuthentication(ConnectWithAuthentication.Request request) {
+        if (securityConfig.authenticationEnabled()) {
+            sender().tell(new ConnectWithAuthentication.Response(true, null, null), self());
+            return;
+        }
         MqttConnectMessage message = request.message();
         String username = message.payload().userName();
         String password = message.payload().passwordInBytes() != null
@@ -87,26 +91,33 @@ public class Authenticator extends AbstractActor {
         this.usersTable = createQuotedTableName(securityConfig.usersTable());
         this.rolesTable = createQuotedTableName(securityConfig.rolesTable());
 
-        try {
-            dbConnection = DriverManager.getConnection(
-                    securityConfig.jdbcUrl(),
-                    securityConfig.jdbcUsername(),
-                    securityConfig.jdbcPassword()
-            );
-        } catch (SQLException e) {
+        if (securityConfig.authenticationEnabled()) {
+            try {
+                dbConnection = DriverManager.getConnection(
+                        securityConfig.jdbcUrl(),
+                        securityConfig.jdbcUsername(),
+                        securityConfig.jdbcPassword()
+                );
+            } catch (SQLException e) {
+                LoggingUtils.logApplicationEvent(
+                        LoggingUtils.LogLevel.ERROR,
+                        "Failed to connect to authentication database: " + e.getMessage(),
+                        "Authenticator"
+                );
+                throw new RuntimeException(e);
+            }
             LoggingUtils.logApplicationEvent(
-                    LoggingUtils.LogLevel.ERROR,
-                    "Failed to connect to authentication database: " + e.getMessage(),
+                    LoggingUtils.LogLevel.INFO,
+                    "Authenticator started, connected to database " + securityConfig.jdbcUrl(),
                     "Authenticator"
             );
-            throw new RuntimeException(e);
+        } else {
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.INFO,
+                    "Authenticator disabled",
+                    "Authenticator"
+            );
         }
-
-        LoggingUtils.logApplicationEvent(
-                LoggingUtils.LogLevel.INFO,
-                "Authenticator started, connected to database " + securityConfig.jdbcUrl(),
-                "Authenticator"
-        );
     }
 
     @Override
@@ -137,7 +148,6 @@ public class Authenticator extends AbstractActor {
         }
         return false;
     }
-
 
 
     private ConnectWithAuthentication.Role getUserRole(String username) throws SQLException {

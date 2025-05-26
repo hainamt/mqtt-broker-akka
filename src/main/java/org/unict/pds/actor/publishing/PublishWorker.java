@@ -32,7 +32,6 @@ public class PublishWorker extends AbstractActor {
                 .build();
     }
 
-
     private void processPublishRequestWithSubscribers(PublishMessage.RequestWithSubscribers request) {
         MqttPublishMessage message = request.message();
         String topic = message.variableHeader().topicName();
