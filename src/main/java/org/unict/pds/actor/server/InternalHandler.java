@@ -84,8 +84,7 @@ public class InternalHandler {
                 PublishMessage.Request.class,
                 actor.getSelf().path().toString(),
                 actor.getPublishManager().path().toString(),
-                "InternalHandler.PublishManager"
-        );
+                "InternalHandler.PublishManager");
         actor.getPublishManager().tell(message, actor.getSelf());
     }
 

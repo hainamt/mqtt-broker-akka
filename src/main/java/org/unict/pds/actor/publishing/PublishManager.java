@@ -15,6 +15,7 @@ import org.unict.pds.message.subscribe.SubscriberLookup;
 import org.unict.pds.message.topic.CheckTopicExist;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 @Slf4j
@@ -127,13 +128,13 @@ public class PublishManager extends AbstractActor {
 //            return;
 //        }
 
-        CompletableFuture<Object> future = Patterns.ask(
+        CompletableFuture<Object> topicFuture = Patterns.ask(
                 topicManager,
                 new CheckTopicExist.Request(topic),
                 lookupTopicTimeout
         ).toCompletableFuture();
 
-        future.thenAccept(response -> {
+        topicFuture.thenAccept(response -> {
             CheckTopicExist.Response resp = (CheckTopicExist.Response) response;
             boolean topicExists = resp.exists();
 
@@ -141,13 +142,42 @@ public class PublishManager extends AbstractActor {
                 LoggingUtils.logApplicationEvent(
                         LoggingUtils.LogLevel.INFO,
                         "Topic exists: " + topic + ", forwarding to publish worker",
-                        "PublishManager"
-                );
+                        "PublishManager");
+
+                CompletableFuture<Object> subscribersFuture = Patterns.ask(
+                        subscriptionManager,
+                        new SubscriberLookup.Request(topic),
+                        lookupSubscriberTimeout
+                ).toCompletableFuture();
+
+                subscribersFuture.thenAccept(subsResponse -> {
+                    SubscriberLookup.Response subsResp = (SubscriberLookup.Response) subsResponse;
+                    List<ActorRef> subscribers = subsResp.subscribers();
+
+                    LoggingUtils.logApplicationEvent(
+                            LoggingUtils.LogLevel.INFO,
+                            "Found " + subscribers.size() + " subscribers for topic: " + topic + ", forwarding to worker",
+                            "PublishManager"
+                    );
+
+                    PublishMessage.RequestWithSubscribers requestWithSubs =
+                            new PublishMessage.RequestWithSubscribers(message, subscribers);
+
+                    int workerIndex = Math.abs(topic.hashCode()) % numWorkers;
+                    ActorRef worker = getContext().child("publish-worker-" + workerIndex).get();
+                    worker.tell(requestWithSubs, getSelf());
+                }).exceptionally(ex -> {
+                    LoggingUtils.logApplicationEvent(
+                            LoggingUtils.LogLevel.ERROR,
+                            "Error looking up subscribers: " + ex.getMessage(),
+                            "PublishManager"
+                    );
+                    return null;
+                });
 
                 int workerIndex = Math.abs(topic.hashCode()) % numWorkers;
                 ActorRef worker = getContext().child("publish-worker-" + workerIndex).get();
                 worker.tell(request, getSelf());
-//                forwardToPublishWorker(message);
             } else {
                 LoggingUtils.logApplicationEvent(
                         LoggingUtils.LogLevel.WARN,
