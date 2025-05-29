@@ -1,4 +1,4 @@
-MQTT Broker is my final project for Distributed Systems at the University of Catania. 
+MQTT Broker is my project for Distributed Systems course at the University of Catania. 
 It is simple but quite functional. Broker is based on Akka Runtime, the reason for using actor model is that it makes implementing asynchronous applications easy and intuitive, 
 Sequence Diagram for message processing flow as well as other illustrations can be seen here:
 
