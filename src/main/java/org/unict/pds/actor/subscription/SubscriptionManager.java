@@ -2,13 +2,14 @@ package org.unict.pds.actor.subscription;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
-import akka.actor.ActorSelection;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
 import io.netty.handler.codec.mqtt.*;
 import lombok.extern.slf4j.Slf4j;
+import org.unict.pds.actor.ActorResolutionUtils;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.SubscriptionManagerConfiguration;
+import org.unict.pds.exception.CriticalActorCouldNotBeResolved;
 import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.SubscriberLookup;
@@ -38,27 +39,42 @@ public class SubscriptionManager extends AbstractActor {
         SubscriptionManagerConfiguration subscriptionManagerConfig = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).subscriptionManagerConfig();
 
-        ActorSelection selection = getContext().actorSelection(subscriptionManagerConfig.topicManagerAddress());
-        selection.resolveOne(java.time.Duration.ofSeconds(3))
-                .whenComplete((actorRef, throwable) -> {
-                    if (throwable != null) {
-                        LoggingUtils.logApplicationEvent(
-                                LoggingUtils.LogLevel.ERROR,
-                                "Could not resolve topic manager: " + throwable.getMessage(),
-                                "SubscriptionManager"
-                        );
-                    } else {
-                        this.topicManager = actorRef;
-                        LoggingUtils.logApplicationEvent(
-                                LoggingUtils.LogLevel.INFO,
-                                "Successfully resolved topic manager",
-                                "SubscriptionManager"
-                        );
-                    }
-                });
+//        selection.resolveOne(java.time.Duration.ofSeconds(3))
+//                .whenComplete((actorRef, throwable) -> {
+//                    if (throwable != null) {
+//                        LoggingUtils.logApplicationEvent(
+//                                LoggingUtils.LogLevel.ERROR,
+//                                "Could not resolve topic manager:" + throwable.getMessage(),
+//                                "SubscriptionManager"
+//                        );
+//                    } else {
+//                        this.topicManager = actorRef;
+//                        LoggingUtils.logApplicationEvent(
+//                                LoggingUtils.LogLevel.INFO,
+//                                "Successfully resolved topic manager",
+//                                "SubscriptionManager"
+//                        );
+//                    }
+//                });
+//
+        try {
+            this.topicManager = ActorResolutionUtils.resolveActor(
+                    getContext().getSystem(),
+                    subscriptionManagerConfig.topicManagerAddress(),
+                    subscriptionManagerConfig.resolutionTimeout(),
+                    "SubscriptionManager",
+                    true);
+        } catch (CriticalActorCouldNotBeResolved e) {
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.ERROR,
+                    "Startup failed: " + e.getMessage(),
+                    "SubscriptionManager"
+            );
+            throw e;
+        }
         LoggingUtils.logApplicationEvent(
                 LoggingUtils.LogLevel.INFO,
-                "SubscriptionManager started",
+                "SubscriptionManager started, successfully resolved TopicManager",
                 "SubscriptionManager"
         );
 
@@ -215,14 +231,12 @@ public class SubscriptionManager extends AbstractActor {
             if (topicSubscribers.values().stream().noneMatch(list -> list.contains(subscriber))) {
                 getContext().unwatch(subscriber);
             }
-            if (removed) {
-                System.out.println("Removed subscriber from topic: " + topic +
-                        ", total subscribers: " + subscribers.size());
-            }
+            //                System.out.println("Removed subscriber from topic: " + topic +
+            //                        ", total subscribers: " + subscribers.size());
+            //            }
             return removed;
-        } else {
-            return false;
         }
+        return false;
     }
 
     private void handleSubscriberLookup(SubscriberLookup.Request request) {

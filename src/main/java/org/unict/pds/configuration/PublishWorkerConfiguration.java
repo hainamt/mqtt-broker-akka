@@ -8,7 +8,7 @@ import java.time.Duration;
 public record PublishWorkerConfiguration(
         String subscriberManagerAddress,
         Duration subscriberLookupTimeoutSecond
-) {
+) implements LoadableActorConfig {
     public static PublishWorkerConfiguration load() {
         Config config = ConfigFactory.load().getConfig("publish-worker");
         return new PublishWorkerConfiguration(

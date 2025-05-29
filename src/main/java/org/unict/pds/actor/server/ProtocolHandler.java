@@ -1,6 +1,5 @@
 package org.unict.pds.actor.server;
 
-
 import akka.io.TcpMessage;
 import akka.util.ByteString;
 import io.netty.buffer.ByteBuf;
@@ -10,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.security.ConnectWithAuthentication;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
@@ -25,7 +25,7 @@ public class ProtocolHandler {
         LoggingUtils.logProtocolMessage(
                 LoggingUtils.LogLevel.INFO,
                 message.fixedHeader().messageType(),
-                actor.getSender().path().address().toString(),
+                actor.getTcpConnection().path().address().toString(),
                 actor.getSelf().path().address().toString(),
                 true
         );
@@ -44,7 +44,7 @@ public class ProtocolHandler {
                 break;
 
             case CONNECT:
-                onReceiveInboundConnect();
+                onReceiveInboundConnect((MqttConnectMessage) message);
                 break;
 
             case DISCONNECT:
@@ -60,7 +60,27 @@ public class ProtocolHandler {
         }
     }
 
-    private void onReceiveInboundConnect() {
+    private void onReceiveInboundConnect(MqttConnectMessage message) {
+        if (actor.isNeedAuthenticated()) {
+            actor.getInternalHandler().onReceiveConnectWithAuthRequest(new ConnectWithAuthentication.Request(message));
+        } else {
+            MqttFixedHeader fixedHeader = new MqttFixedHeader(
+                    MqttMessageType.CONNACK,
+                    false,
+                    MqttQoS.AT_MOST_ONCE,
+                    false,
+                    2);
+
+            MqttConnAckVariableHeader variableHeader = new MqttConnAckVariableHeader(
+                    MqttConnectReturnCode.CONNECTION_ACCEPTED,
+                    false);
+
+            MqttConnAckMessage connAckMessage = new MqttConnAckMessage(fixedHeader, variableHeader);
+            sendMqttMessage(connAckMessage);
+        }
+    }
+
+    public void onReceiveOutboundConnectWithAuthAck(ConnectWithAuthentication.Response response) {
         MqttFixedHeader fixedHeader = new MqttFixedHeader(
                 MqttMessageType.CONNACK,
                 false,
@@ -68,12 +88,20 @@ public class ProtocolHandler {
                 false,
                 2);
 
+        MqttConnectReturnCode returnCode = response.authenticated()
+                ? MqttConnectReturnCode.CONNECTION_ACCEPTED
+                : MqttConnectReturnCode.CONNECTION_REFUSED_BAD_USER_NAME_OR_PASSWORD;
+
         MqttConnAckVariableHeader variableHeader = new MqttConnAckVariableHeader(
-                MqttConnectReturnCode.CONNECTION_ACCEPTED,
+                returnCode,
                 false);
 
         MqttConnAckMessage connAckMessage = new MqttConnAckMessage(fixedHeader, variableHeader);
         sendMqttMessage(connAckMessage);
+
+        if (!response.authenticated()) {
+            actor.getTcpConnection().tell(TcpMessage.close(), actor.getSelf());
+        }
     }
 
     private void onReceiveInboundDisconnect() {

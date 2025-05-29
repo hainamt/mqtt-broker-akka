@@ -2,81 +2,111 @@ package org.unict.pds.actor.publishing;
 
 import akka.actor.*;
 import akka.pattern.Patterns;
-import akka.routing.ConsistentHashingPool;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.unict.pds.actor.ActorResolutionUtils;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.PublishManagerConfiguration;
+import org.unict.pds.exception.CriticalActorCouldNotBeResolved;
 import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.subscribe.SubscriberLookup;
 import org.unict.pds.message.topic.CheckTopicExist;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 @Slf4j
+@Getter
 public class PublishManager extends AbstractActor {
 
-    private ActorRef publishWorkerRouter;
     private ActorRef topicManager;
-    private final Duration checkTopicTimeout = Duration.ofSeconds(3);
+    private ActorRef subscriptionManager;
+    private int numWorkers;
+    private Duration lookupTopicTimeout;
+    private Duration lookupSubscriberTimeout ;
 
     @Override
     public void preStart() {
         PublishManagerConfiguration config = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).publishManagerConfig();
 
-        int numWorkers = config.numberWorkers();
+        numWorkers = config.numberWorkers();
+        lookupTopicTimeout = config.lookupTopicTimeout();
+        lookupSubscriberTimeout = config.lookupSubscriberTimeout();
 
-        publishWorkerRouter = getContext().actorOf(
-                new ConsistentHashingPool(numWorkers)
-                        .withHashMapper(message -> {
-                            if (message instanceof PublishMessage.Request req) {
-                                return req.message().variableHeader().topicName();
-                            }
-                            return null;
-                        })
-                        .props(Props.create(PublishWorker.class)),
-                "publish-worker-pool");
+        try {
+//            publishWorkerRouter = getContext().actorOf(
+//                    new ConsistentHashingPool(numWorkers)
+//                            .withHashMapper(message -> {
+//                                if (message instanceof PublishMessage.Request req) {
+//                                    return req.message().variableHeader().topicName();
+//                                }
+//                                return null;
+//                            })
+//                            .props(Props.create(PublishWorker.class)),
+//                    "publish-worker-pool");
+            for (int i = 0; i < numWorkers; i++) {
+                getContext().actorOf(Props.create(PublishWorker.class), "publish-worker-" + i);
+            }
 
-        String topicManagerPath = config.topicManagerAddress();
-        if (topicManagerPath != null && !topicManagerPath.isEmpty()) {
-            getContext().actorSelection(topicManagerPath)
-                    .resolveOne(Duration.ofSeconds(3))
-                    .whenComplete((actorRef, throwable) -> {
-                        if (throwable != null) {
-                            LoggingUtils.logApplicationEvent(
-                                    LoggingUtils.LogLevel.ERROR,
-                                    "Could not resolve topic manager: " + throwable.getMessage(),
-                                    "PublishManager"
-                            );
-                        } else {
-                            this.topicManager = actorRef;
-                            LoggingUtils.logApplicationEvent(
-                                    LoggingUtils.LogLevel.INFO,
-                                    "Successfully resolved topic manager",
-                                    "PublishManager"
-                            );
-                        }
-                    });
-        } else {
+            this.topicManager = ActorResolutionUtils.resolveActor(
+                    getContext().getSystem(),
+                    config.topicManagerAddress(),
+                    config.resolutionTimeout(),
+                    "PublishManager",
+                    true);
+
+            this.subscriptionManager = ActorResolutionUtils.resolveActor(
+                    getContext().getSystem(),
+                    config.subscriptionManagerAddress(),
+                    config.resolutionTimeout(),
+                    "PublishManager",
+                    true);
+
+        } catch (CriticalActorCouldNotBeResolved e) {
             LoggingUtils.logApplicationEvent(
                     LoggingUtils.LogLevel.ERROR,
-                    "Topic manager path not configured",
+                    "PublishManager startup failed: " + e.getMessage(),
                     "PublishManager"
             );
+            throw e;
         }
         LoggingUtils.logApplicationEvent(
                 LoggingUtils.LogLevel.INFO,
-                "PublishManager started with " + numWorkers + " workers",
+                "PublishManager started with " + numWorkers + " workers, successfully resolved TopicManager",
                 "PublishManager"
         );
+//        String topicManagerPath = config.topicManagerAddress();
+//        if (topicManagerPath != null && !topicManagerPath.isEmpty()) {
+//            getContext().actorSelection(topicManagerPath)
+//                    .resolveOne(Duration.ofSeconds(3))
+//                    .whenComplete((actorRef, throwable) -> {
+//                        if (throwable != null) {
+//                            LoggingUtils.logApplicationEvent(
+//                                    LoggingUtils.LogLevel.ERROR,
+//                                    "Could not resolve topic manager: " + throwable.getMessage(),
+//                                    "PublishManager"
+//                            );
+//                        } else {
+//                            this.topicManager = actorRef;
+//                            LoggingUtils.logApplicationEvent(
+//                                    LoggingUtils.LogLevel.INFO,
+//                                    "Successfully resolved topic manager",
+//                                    "PublishManager"
+//                            );
+//                        }
+//                    });
+//        }
     }
 
     @Override
     public Receive createReceive() {
         return receiveBuilder()
                 .match(PublishMessage.Request.class, this::handlePublishMessage)
+                .match(SubscriberLookup.Request.class, this::handleSubscriberLookup)
                 .build();
     }
 
@@ -98,13 +128,13 @@ public class PublishManager extends AbstractActor {
 //            return;
 //        }
 
-        CompletableFuture<Object> future = Patterns.ask(
+        CompletableFuture<Object> topicFuture = Patterns.ask(
                 topicManager,
                 new CheckTopicExist.Request(topic),
-                checkTopicTimeout
+                lookupTopicTimeout
         ).toCompletableFuture();
 
-        future.thenAccept(response -> {
+        topicFuture.thenAccept(response -> {
             CheckTopicExist.Response resp = (CheckTopicExist.Response) response;
             boolean topicExists = resp.exists();
 
@@ -112,10 +142,38 @@ public class PublishManager extends AbstractActor {
                 LoggingUtils.logApplicationEvent(
                         LoggingUtils.LogLevel.INFO,
                         "Topic exists: " + topic + ", forwarding to publish worker",
-                        "PublishManager"
-                );
+                        "PublishManager");
 
-                forwardToPublishWorker(message);
+                CompletableFuture<Object> subscribersFuture = Patterns.ask(
+                        subscriptionManager,
+                        new SubscriberLookup.Request(topic),
+                        lookupSubscriberTimeout
+                ).toCompletableFuture();
+
+                subscribersFuture.thenAccept(subsResponse -> {
+                    SubscriberLookup.Response subsResp = (SubscriberLookup.Response) subsResponse;
+                    List<ActorRef> subscribers = subsResp.subscribers();
+
+                    LoggingUtils.logApplicationEvent(
+                            LoggingUtils.LogLevel.INFO,
+                            "Found " + subscribers.size() + " subscribers for topic: " + topic + ", forwarding to worker",
+                            "PublishManager"
+                    );
+
+                    PublishMessage.RequestWithSubscribers requestWithSubs =
+                            new PublishMessage.RequestWithSubscribers(message, subscribers);
+
+                    int workerIndex = Math.abs(topic.hashCode()) % numWorkers;
+                    ActorRef worker = getContext().child("publish-worker-" + workerIndex).get();
+                    worker.tell(requestWithSubs, getSelf());
+                }).exceptionally(ex -> {
+                    LoggingUtils.logApplicationEvent(
+                            LoggingUtils.LogLevel.ERROR,
+                            "Error looking up subscribers: " + ex.getMessage(),
+                            "PublishManager"
+                    );
+                    return null;
+                });
             } else {
                 LoggingUtils.logApplicationEvent(
                         LoggingUtils.LogLevel.WARN,
@@ -133,8 +191,48 @@ public class PublishManager extends AbstractActor {
         });
     }
 
-    private void forwardToPublishWorker(MqttPublishMessage message) {
-        PublishMessage.Request request = new PublishMessage.Request(message);
-        publishWorkerRouter.tell(request, self());
+    private void handleSubscriberLookup(SubscriberLookup.Request request) {
+        String topic = request.topic();
+        ActorRef originalSender = getSender();
+
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                SubscriberLookup.Request.class,
+                getSender().path().toString(),
+                getSelf().path().toString(),
+                "PublishManager forwarding subscriber lookup for topic: " + topic
+        );
+
+        CompletableFuture<Object> future = Patterns.ask(
+                subscriptionManager,
+                request,
+                lookupSubscriberTimeout
+        ).toCompletableFuture();
+
+        future.thenAccept(response -> {
+            SubscriberLookup.Response resp = (SubscriberLookup.Response) response;
+            originalSender.tell(resp, getSelf());
+
+            LoggingUtils.logInternalMessage(
+                    LoggingUtils.LogLevel.INFO,
+                    SubscriberLookup.Response.class,
+                    getSelf().path().toString(),
+                    originalSender.path().toString(),
+                    "PublishManager forwarded subscriber lookup response for topic: " + topic
+            );
+        }).exceptionally(ex -> {
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.ERROR,
+                    "Error looking up subscribers: " + ex.getMessage(),
+                    "PublishManager"
+            );
+            return null;
+        });
     }
+
+
+//    private void forwardToPublishWorker(MqttPublishMessage message) {
+//        PublishMessage.Request request = new PublishMessage.Request(message);
+//        publishWorkerRouter.tell(request, self());
+//    }
 }

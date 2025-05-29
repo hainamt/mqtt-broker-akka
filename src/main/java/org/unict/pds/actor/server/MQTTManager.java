@@ -9,9 +9,14 @@ import io.netty.handler.codec.mqtt.*;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import org.unict.pds.actor.ActorResolutionUtils;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.MQTTManagerConfiguration;
+import org.unict.pds.configuration.SecurityConfiguration;
+import org.unict.pds.exception.CriticalActorCouldNotBeResolved;
+import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.security.ConnectWithAuthentication;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
@@ -22,6 +27,8 @@ public class MQTTManager extends AbstractActor {
     private final EmbeddedChannel decodeChannel = new EmbeddedChannel(new MqttDecoder(65536));
     private ActorRef subscriptionManager;
     private ActorRef publishManager;
+    private ActorRef authenticator;
+    private boolean needAuthenticated = false;
 
     private final ActorRef tcpConnection;
     private final ProtocolHandler protocolHandler = new ProtocolHandler(this);
@@ -30,33 +37,56 @@ public class MQTTManager extends AbstractActor {
     
     @Override
     public void preStart() {
-
         MQTTManagerConfiguration configuration = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).mqttManagerConfig();
+        SecurityConfiguration securityConfiguration = ConfigurationExtension.getInstance()
+                .get(getContext().getSystem()).securityConfig();
+        try {
+            this.subscriptionManager = ActorResolutionUtils.resolveActor(
+                    getContext().getSystem(),
+                    configuration.subscriptionManagerAddress(),
+                    configuration.resolutionTimeout(),
+                    "MQTTManager",
+                    true
+            );
 
-        ActorSelection subscriptionManagerSelection = getContext()
-                .actorSelection(configuration.subscriptionManagerAddress());
-        subscriptionManagerSelection.resolveOne(java.time.Duration.ofSeconds(3))
-                .whenComplete((actorRef, throwable) -> {
-                    if (throwable != null) {
-                        System.err.println("Could not resolve subscription manager: " + throwable.getMessage());
-                    } else {
-                        this.subscriptionManager = actorRef;
-                        System.out.println("Successfully resolved subscription manager");
-                    }
-                });
+            this.publishManager = ActorResolutionUtils.resolveActor(
+                    getContext().getSystem(),
+                    configuration.publishManagerAddress(),
+                    configuration.resolutionTimeout(),
+                    "MQTTManager",
+                    true
+            );
 
-        ActorSelection publishManagerSelection = getContext()
-                .actorSelection(configuration.publishManagerAddress());
-        publishManagerSelection.resolveOne(java.time.Duration.ofSeconds(3))
-                .whenComplete((actorRef, throwable) -> {
-                    if (throwable != null) {
-                        System.err.println("Could not resolve Publish manager: " + throwable.getMessage());
-                    } else {
-                        this.publishManager = actorRef;
-                        System.out.println("Successfully resolved Publish manager");
-                    }
-                });
+            if (securityConfiguration.authenticationEnabled()) {
+                this.authenticator = ActorResolutionUtils.resolveActor(
+                        getContext().getSystem(),
+                        configuration.authenticatorAddress(),
+                        configuration.resolutionTimeout(),
+                        "MQTTManager",
+                        true);
+                this.needAuthenticated = true;
+            }
+
+        } catch (CriticalActorCouldNotBeResolved e) {
+            LoggingUtils.logApplicationEvent(
+                    LoggingUtils.LogLevel.ERROR,
+                    "MQTTManager startup failed: " + e.getMessage(),
+                    "MQTTManager"
+            );
+            throw e;
+        }
+
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "MQTT Manager started, successfully resolved PublishManager",
+                "MQTTManager"
+        );
+        LoggingUtils.logApplicationEvent(
+                LoggingUtils.LogLevel.INFO,
+                "MQTT Manager started, successfully resolved SubscriptionManager",
+                "MQTTManager"
+        );
     }
     
     @Override
@@ -66,6 +96,7 @@ public class MQTTManager extends AbstractActor {
                 .match(Tcp.ConnectionClosed.class, this::handleConnectionClosed)
                 .match(SubscribeMessage.Response.class, internalHandler::onReceiveSubscriptionResponse)
                 .match(UnsubscribeMessage.Response.class, internalHandler::onReceiveUnsubscribeResponse)
+                .match(ConnectWithAuthentication.Response.class, internalHandler::onReceiveConnectWithAuthResponse)
                 .match(PublishMessage.Release.class, internalHandler::onReceivePublishMessageRelease)
                 .build();
     }

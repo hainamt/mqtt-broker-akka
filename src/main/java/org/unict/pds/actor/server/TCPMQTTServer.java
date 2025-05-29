@@ -1,11 +1,10 @@
-package org.unict.pds.actor;
+package org.unict.pds.actor.server;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.io.Tcp;
 import akka.io.TcpMessage;
-import org.unict.pds.actor.server.MQTTManager;
 import org.unict.pds.configuration.ConfigurationExtension;
 import org.unict.pds.configuration.TCPConfiguration;
 
@@ -15,7 +14,7 @@ import java.net.InetSocketAddress;
 public class TCPMQTTServer extends AbstractActor {
 
     @Override
-    public void preStart() throws Exception {
+    public void preStart() {
         TCPConfiguration tcpConfiguration = ConfigurationExtension.getInstance()
                 .get(getContext().getSystem()).tcpConfig();
         final ActorRef tcp = Tcp.get(getContext().getSystem()).manager();

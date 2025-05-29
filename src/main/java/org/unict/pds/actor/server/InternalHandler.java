@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.unict.pds.logging.LoggingUtils;
 import org.unict.pds.message.publish.PublishMessage;
+import org.unict.pds.message.security.ConnectWithAuthentication;
 import org.unict.pds.message.subscribe.SubscribeMessage;
 import org.unict.pds.message.subscribe.UnsubscribeMessage;
 
@@ -11,6 +12,27 @@ import org.unict.pds.message.subscribe.UnsubscribeMessage;
 @RequiredArgsConstructor
 public class InternalHandler {
     private final MQTTManager actor;
+
+    public void onReceiveConnectWithAuthRequest(ConnectWithAuthentication.Request message) {
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                ConnectWithAuthentication.Request.class,
+                actor.getSender().path().toString(),
+                actor.getSelf().path().toString(),
+                "InternalHandler.Authenticator");
+        actor.getAuthenticator().tell(message, actor.getSelf());
+    }
+
+    public void onReceiveConnectWithAuthResponse(ConnectWithAuthentication.Response response) {
+        LoggingUtils.logInternalMessage(
+                LoggingUtils.LogLevel.INFO,
+                ConnectWithAuthentication.Response.class,
+                actor.getSender().path().toString(),
+                actor.getSelf().path().toString(),
+                "Authenticator.InternalHandler"
+        );
+        actor.getProtocolHandler().onReceiveOutboundConnectWithAuthAck(response);
+    }
 
     public void onReceiveSubscribeRequest(SubscribeMessage.Request message) {
         LoggingUtils.logInternalMessage(
@@ -62,8 +84,7 @@ public class InternalHandler {
                 PublishMessage.Request.class,
                 actor.getSelf().path().toString(),
                 actor.getPublishManager().path().toString(),
-                "InternalHandler.PublishManager"
-        );
+                "InternalHandler.PublishManager");
         actor.getPublishManager().tell(message, actor.getSelf());
     }
 
